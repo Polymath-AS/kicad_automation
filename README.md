@@ -40,6 +40,22 @@ docker compose up kicad
 
 The project is mounted at `/workspace`. Runtime sockets and logs live under `/runtime`; KiCad config is under `/config`; caches are under `/cache`.
 
+The PowerShell wrapper validates the selected project on the host before Compose starts. A
+complete target must resolve to matching `.kicad_pro`, `.kicad_sch`, and `.kicad_pcb` files under
+`-ProjectRoot`. The host project root is mounted at `/workspace`, so the same resolved target is
+passed to KiCad as `/workspace/<relative-project-path>`. This catches a stale selection or a
+different mount before Docker validation runs; it does not recreate missing projects.
+
+For example, validate a project from the same host root used by the live service with:
+
+```powershell
+.\tools\kicad-docker.ps1 validate tests/fixtures/kicad-project/minimal --erc --drc
+```
+
+If Docker itself fails, the wrapper preserves sanitized Compose output under
+`.kicad-automation/compose-failures/` and reports the failure class. Authentication tokens are
+not written to those reports.
+
 MCP Pro is published only to host loopback:
 
 ```text
@@ -106,6 +122,27 @@ The default profile is `pcb_only` with `KICAD_MCP_OPERATING_MODE=write`. Set
 `KICAD_MCP_PROFILE=pcb_layout`, `manufacturing`, or another upstream MCP Pro profile in `.env`
 when that profile's additional tools are required.
 
+Schematic support is split deliberately:
+
+- KiCad 10.0.4 does not provide a verified schematic-editor IPC surface. The official IPC
+  documentation describes KiCad 9/10 IPC as GUI-only and PCB-oriented; the installed `kipy`
+  schematic class is marked KiCad 11-only and is incompatible with the bundled KiCad 10
+  protobufs. The runtime therefore does not start Eeschema as a false readiness signal.
+- `KICAD_MCP_PROFILE=schematic_only` (or another upstream schematic profile) exposes MCP Pro's
+  supported file-backed schematic tools. Set `KICAD_MCP_SCHEMATIC_MODE=file_backed` to make that
+  intent explicit. Their responses identify `Source: file-backed`.
+- `KICAD_MCP_SCHEMATIC_MODE=live` fails early with the exact unsupported-stack diagnosis. It is
+  reserved for a future verified KiCad 11+ IPC configuration; it does not silently fall back to
+  file editing.
+
+The project-scoped Codex allowlist includes the supported file-backed schematic inspection tools;
+restart Codex after changing the server profile so its tool catalog is refreshed.
+
+The integration test records `liveSchematicContext`, `liveSchematicRead`, schematic tool
+exposure, and the backend identified by the schematic read. Set
+`KICAD_TEST_SCHEMATIC_LIVE=1` only when testing a stack that is expected to provide a real live
+schematic document; the test fails if MCP reports a file-backed fallback.
+
 ## Validate
 
 `kicad-cli` is the validation/export authority. The primary entry point is:
@@ -116,7 +153,10 @@ docker compose run --rm kicad validate --project /workspace/CAD/my-board/my-boar
 ```
 
 The script supports ERC, DRC, Gerbers, drill files, schematic/PCB PDFs, and BOM export.
-It exits nonzero when ERC/DRC report violations or when an export/check tool fails.
+It emits a JSON result with separate ERC and DRC statuses, report paths, violation counts, the
+captured `kicad-cli` log, and an overall status. `clean` is used only when both requested checks
+ran and produced no violations. Missing project files, validator execution errors, and reported
+ERC/DRC violations return distinct nonzero outcomes.
 
 ## Test
 
@@ -124,7 +164,10 @@ It exits nonzero when ERC/DRC report violations or when an export/check tool fai
 docker compose run --rm test
 ```
 
-The integration path verifies KiCad 10.x, Xvfb, `DISPLAY`, pcbnew launch, IPC socket creation, MCP Pro startup, MCP tool discovery, an IPC-required PCB query, board save, DRC, ERC, eeschema launch, and clean process shutdown.
+The integration path verifies KiCad 10.x, Xvfb, `DISPLAY`, pcbnew launch, IPC socket creation,
+MCP Pro startup, MCP tool discovery, live PCB queries before and after save, project diagnostics,
+schematic capability evidence when a schematic profile is selected, and separate clean ERC/DRC
+results. It does not treat an Eeschema process that merely stays alive as proof of schematic IPC.
 
 PowerShell convenience wrapper:
 

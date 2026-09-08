@@ -37,6 +37,15 @@ mcp_call() {
     > "$out"
 }
 
+has_tool() {
+  local name=$1
+  jq -e --arg name "$name" 'any(.result.tools[]?; .name == $name)' /runtime/test-mcp-tools.json >/dev/null
+}
+
+server_info_text() {
+  jq -r '.result.content[0].text // empty' "$1"
+}
+
 version=$(kicad-cli version)
 [[ "$version" == 10.* ]] || { printf 'KiCad version is not 10.x: %s\n' "$version" >&2; exit 2; }
 
@@ -67,39 +76,96 @@ done
 }
 
 mcp_call 2 "tools/list" '{}' /runtime/test-mcp-tools.json
-grep -q '"kicad_get_server_info"' /runtime/test-mcp-tools.json || { printf 'MCP tool list missing kicad_get_server_info\n' >&2; exit 2; }
-grep -q '"pcb_get_board_summary"' /runtime/test-mcp-tools.json || { printf 'MCP tool list missing pcb_get_board_summary\n' >&2; exit 2; }
+has_tool kicad_get_server_info || { printf 'MCP tool list missing kicad_get_server_info\n' >&2; exit 2; }
 
 mcp_call 3 "tools/call" '{"name":"kicad_get_server_info","arguments":{}}' /runtime/test-mcp-server-info.json
 mcp_call 4 "tools/call" '{"name":"kicad_get_project_info","arguments":{}}' /runtime/test-mcp-project-info.json
-mcp_call 5 "tools/call" '{"name":"pcb_get_board_summary","arguments":{}}' /runtime/test-mcp-ipc-summary.json
-mcp_call 6 "tools/call" '{"name":"pcb_save","arguments":{}}' /runtime/test-mcp-save.json
 
-jq -e '.result.content[]?.text? | contains("Source: live-gui")' /runtime/test-mcp-ipc-summary.json >/dev/null || {
-  printf 'PCB summary did not prove live-gui IPC usage\n' >&2
+pcb_exposed=0
+if has_tool pcb_get_board_summary; then
+  pcb_exposed=1
+  mcp_call 5 "tools/call" '{"name":"pcb_get_board_summary","arguments":{}}' /runtime/test-mcp-ipc-summary.json
+  mcp_call 6 "tools/call" '{"name":"pcb_save","arguments":{}}' /runtime/test-mcp-save.json
+  mcp_call 7 "tools/call" '{"name":"pcb_get_board_summary","arguments":{}}' /runtime/test-mcp-ipc-summary-after-save.json
+
+  jq -e '.result.content[]?.text? | contains("Source: live-gui")' /runtime/test-mcp-ipc-summary.json >/dev/null || {
+    printf 'PCB summary did not prove live-gui IPC usage\n' >&2
+    exit 2
+  }
+  jq -e '.result.content[]?.text? | contains("Source: live-gui")' /runtime/test-mcp-ipc-summary-after-save.json >/dev/null || {
+    printf 'PCB summary after save did not prove live-gui IPC usage\n' >&2
+    exit 2
+  }
+fi
+
+server_info=$(server_info_text /runtime/test-mcp-server-info.json)
+printf '%s\n' "$server_info" | jq -e . >/dev/null || {
+  printf 'Server info did not return a JSON payload\n' >&2
+  exit 2
+}
+live_schematic=$(printf '%s\n' "$server_info" | jq -r '.kicad.liveSchematicContext // false')
+live_schematic_read=$(printf '%s\n' "$server_info" | jq -r '.capabilities.liveSchematicRead // false')
+schematic_exposed=0
+if has_tool sch_get_symbols; then
+  schematic_exposed=1
+  mcp_call 8 "tools/call" '{"name":"sch_get_symbols","arguments":{}}' /runtime/test-mcp-schematic-read.json
+  jq -e '.result.content[]?.text? | contains("Source: file-backed")' /runtime/test-mcp-schematic-read.json >/dev/null || {
+    printf 'Schematic read did not identify its file-backed backend\n' >&2
+    exit 2
+  }
+  if [[ "$live_schematic" == "true" ]]; then
+    printf 'Live schematic context was reported, but sch_get_symbols used file-backed parsing; refusing to claim live schematic IPC\n' >&2
+    exit 2
+  fi
+elif [[ "${KICAD_MCP_PROFILE:-pcb_only}" == schematic* ]]; then
+  printf 'Schematic profile did not expose sch_get_symbols; see /runtime/test-mcp-tools.json\n' >&2
+  exit 2
+fi
+
+if [[ "$pcb_exposed" -eq 0 && "$schematic_exposed" -eq 0 ]]; then
+  printf 'Integration profile exposed neither a PCB live-read tool nor a schematic read tool; see /runtime/test-mcp-tools.json\n' >&2
+  exit 2
+fi
+
+if [[ "${KICAD_TEST_SCHEMATIC_LIVE:-0}" == "1" ]]; then
+  if [[ "$live_schematic" != "true" || "$live_schematic_read" != "true" ]]; then
+    printf 'Live schematic IPC is unavailable for this KiCad/MCP stack: liveSchematicContext=%s liveSchematicRead=%s; see /runtime/test-mcp-server-info.json\n' "$live_schematic" "$live_schematic_read" >&2
+    exit 3
+  fi
+fi
+
+validate_code=0
+validate-kicad --project "/workspace/${stem}" --erc --drc >/runtime/test-validate.json 2>/runtime/test-validate.err || validate_code=$?
+if [[ "$validate_code" -ne 0 ]]; then
+  printf 'Validation failed with exit code %s; see /runtime/test-validate.json, /runtime/test-validate.err, and /runtime/reports\n' "$validate_code" >&2
+  cat /runtime/test-validate.json >&2 2>/dev/null || true
+  cat /runtime/test-validate.err >&2 2>/dev/null || true
+  exit "$validate_code"
+fi
+jq -e '.status == "clean" and ([.results[]?.name] | index("erc")) and ([.results[]?.name] | index("drc"))' /runtime/test-validate.json >/dev/null || {
+  printf 'Validation completed without explicit clean ERC and DRC results\n' >&2
   exit 2
 }
 
-validate-kicad --project "/workspace/${stem}" --erc --drc >/runtime/test-validate.json
-
-eeschema "/workspace/${stem}.kicad_sch" >/runtime/eeschema.log 2>&1 &
-eeschema_pid=$!
-eeschema_ready=0
-for _ in $(seq 1 20); do
-  if kill -0 "$eeschema_pid" >/dev/null 2>&1; then
-    eeschema_ready=1
-    break
-  fi
-  sleep 0.25
-done
-if [[ "$eeschema_ready" -ne 1 ]]; then
-  printf 'eeschema exited early; see /runtime/eeschema.log\n' >&2
-  exit 2
+artifacts=(
+  "/runtime/test-mcp-server-info.json"
+  "/runtime/test-mcp-project-info.json"
+  "/runtime/test-validate.json"
+  "/runtime/test-validate.err"
+)
+if [[ "$pcb_exposed" -eq 1 ]]; then
+  artifacts+=(
+    "/runtime/test-mcp-ipc-summary.json"
+    "/runtime/test-mcp-ipc-summary-after-save.json"
+    "/runtime/test-mcp-save.json"
+  )
 fi
-kill -TERM "$eeschema_pid" >/dev/null 2>&1 || true
-wait "$eeschema_pid" >/dev/null 2>&1 || true
-
-printf '{"status":"ok","kicad_version":%s,"ipc_socket":%s,"mcp_url":%s,"artifacts":["/runtime/test-mcp-server-info.json","/runtime/test-mcp-project-info.json","/runtime/test-mcp-ipc-summary.json","/runtime/test-mcp-save.json","/runtime/test-validate.json"]}\n' \
+if [[ "$schematic_exposed" -eq 1 ]]; then
+  artifacts+=("/runtime/test-mcp-schematic-read.json")
+fi
+artifact_json=$(printf '%s\n' "${artifacts[@]}" | jq -R -s 'split("\n") | map(select(length > 0))')
+printf '{"status":"ok","kicad_version":%s,"ipc_socket":%s,"mcp_url":%s,"live_schematic_context":%s,"live_schematic_read":%s,"pcb_tool_exposed":%s,"schematic_tool_exposed":%s,"artifacts":%s}\n' \
   "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$version")" \
   "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$KICAD_API_SOCKET_PATH")" \
-  "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$mcp_url")"
+  "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$mcp_url")" \
+  "$live_schematic" "$live_schematic_read" "$pcb_exposed" "$schematic_exposed" "$artifact_json"

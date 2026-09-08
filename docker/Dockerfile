@@ -30,6 +30,7 @@ ENV LANG=C.UTF-8 \
     KICAD_VALIDATE=/usr/local/bin/validate-kicad \
     KICAD_MCP_PROJECT_DIR=/workspace \
     KICAD_MCP_PROFILE=pcb_only \
+    KICAD_MCP_SCHEMATIC_MODE=disabled \
     KICAD_MCP_OPERATING_MODE=write \
     KICAD_MCP_HOST=0.0.0.0 \
     KICAD_MCP_PORT=3334 \

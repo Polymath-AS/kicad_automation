@@ -6,6 +6,7 @@ export LIBGL_ALWAYS_SOFTWARE=${LIBGL_ALWAYS_SOFTWARE:-1}
 export KICAD_WORKSPACE=${KICAD_WORKSPACE:-/workspace}
 export KICAD_MCP_PROJECT_DIR=${KICAD_MCP_PROJECT_DIR:-$KICAD_WORKSPACE}
 export KICAD_MCP_PROFILE=${KICAD_MCP_PROFILE:-pcb_only}
+export KICAD_MCP_SCHEMATIC_MODE=${KICAD_MCP_SCHEMATIC_MODE:-disabled}
 export KICAD_MCP_OPERATING_MODE=${KICAD_MCP_OPERATING_MODE:-write}
 export KICAD_MCP_HOST=${KICAD_MCP_HOST:-0.0.0.0}
 export KICAD_MCP_PORT=${KICAD_MCP_PORT:-3334}
@@ -27,6 +28,19 @@ KICAD_RUNTIME_PROJECT_DIR=
 log() { printf '[%s] %s\n' "$1" "$2" >&2; }
 die() { log "$1" "$2"; exit "${3:-2}"; }
 
+validate_schematic_mode() {
+  case "$KICAD_MCP_SCHEMATIC_MODE" in
+    disabled|file_backed)
+      ;;
+    live)
+      die schematic "live schematic IPC is not supported by KiCad 10.0.4 in this runtime; use KiCad 11+ with a verified schematic IPC document API, or select KICAD_MCP_SCHEMATIC_MODE=file_backed"
+      ;;
+    *)
+      die config "unsupported KICAD_MCP_SCHEMATIC_MODE=$KICAD_MCP_SCHEMATIC_MODE (expected disabled, file_backed, or live)"
+      ;;
+  esac
+}
+
 cleanup() {
   local status=$?
   trap - INT TERM EXIT
@@ -36,6 +50,9 @@ cleanup() {
       wait "$pid" >/dev/null 2>&1 || true
     fi
   done
+  if [[ -n "${KICAD_PID:-}" ]]; then
+    rm -f "$KICAD_API_SOCKET_PATH" "$TMPDIR/kicad/api.lock" 2>/dev/null || true
+  fi
   if [[ -n "$KICAD_RUNTIME_PROJECT_DIR" ]]; then
     local lock lock_host lock_user
     for lock in "$KICAD_RUNTIME_PROJECT_DIR"/~*.lck; do
@@ -86,11 +103,35 @@ project_dir_from_target() {
 
 board_from_target() {
   local target=$1
+  if [[ -d "$target" ]]; then
+    printf '%s/%s.kicad_pcb\n' "${target%/}" "$(basename "${target%/}")"
+    return
+  fi
   case "$target" in
     *.kicad_pcb) printf '%s\n' "$target" ;;
     *.kicad_pro|*.kicad_sch) printf '%s\n' "${target%.*}.kicad_pcb" ;;
     *) printf '%s\n' "$target.kicad_pcb" ;;
   esac
+}
+
+project_files_from_board() {
+  local board=$1
+  local stem=${board%.kicad_pcb}
+  printf '%s\n' "$stem.kicad_pro" "$stem.kicad_sch" "$board"
+}
+
+preflight_project() {
+  local target=$1
+  local selected board stem project_dir required
+  selected=$(safe_workspace_path "$target") || die project "invalid target path: $target"
+  board=$(board_from_target "$selected")
+  stem=${board%.kicad_pcb}
+  project_dir=$(dirname "$stem")
+  [[ -f "$board" ]] || die project "selected board not found in container: $board (target=$target; mounted workspace=$KICAD_WORKSPACE)"
+  while IFS= read -r required; do
+    [[ -f "$required" ]] || die project "selected project is incomplete in container: missing $required (board=$board; mounted workspace=$KICAD_WORKSPACE)"
+  done < <(project_files_from_board "$board")
+  printf '%s\n' "$selected" "$board" "$stem" "$project_dir"
 }
 
 clear_project_locks() {
@@ -170,8 +211,18 @@ start_xvfb() {
 start_pcbnew() {
   local board=$1
   [[ -f "$board" ]] || die project "board not found: $board"
-  rm -f "$TMPDIR"/kicad/api*.sock "$TMPDIR"/kicad/api.lock 2>/dev/null || true
   mkdir -p "$TMPDIR/kicad"
+  if [[ -e "$KICAD_API_SOCKET_PATH" ]]; then
+    if command -v fuser >/dev/null 2>&1 && fuser "$KICAD_API_SOCKET_PATH" >/dev/null 2>&1; then
+      die IPC "configured IPC socket is in use at $KICAD_API_SOCKET_PATH; refusing to remove a possibly running KiCad document endpoint"
+    fi
+    log IPC "removing stale configured socket $KICAD_API_SOCKET_PATH"
+    rm -f "$KICAD_API_SOCKET_PATH"
+  fi
+  if [[ -e "$TMPDIR/kicad/api.lock" ]]; then
+    log IPC "removing stale configured lock $TMPDIR/kicad/api.lock"
+    rm -f "$TMPDIR/kicad/api.lock"
+  fi
   KICAD_API_SOCKET="$KICAD_API_SOCKET_PATH" pcbnew "$board" > /runtime/pcbnew.log 2>&1 &
   KICAD_PID=$!
   log KiCad "started pcbnew pid=$KICAD_PID board=$board"
@@ -279,10 +330,12 @@ wait_for_mcp_http() {
 run_with_kicad() {
   local target=$1
   shift
-  local selected board project_dir
-  selected=$(safe_workspace_path "$target") || die project "invalid path: $target"
-  board=$(board_from_target "$selected")
-  project_dir=$(project_dir_from_target "$selected")
+  local selected board stem project_dir
+  mapfile -t project_info < <(preflight_project "$target")
+  selected=${project_info[0]}
+  board=${project_info[1]}
+  stem=${project_info[2]}
+  project_dir=${project_info[3]}
   KICAD_RUNTIME_PROJECT_DIR="$project_dir"
   export KICAD_MCP_PROJECT_DIR="$project_dir"
   clear_project_locks "$project_dir"
@@ -303,6 +356,7 @@ serve_mcp() {
 }
 
 command=${1:-serve}
+validate_schematic_mode
 case "$command" in
   serve)
     target=${2:-tests/fixtures/kicad-project/minimal.kicad_pcb}
