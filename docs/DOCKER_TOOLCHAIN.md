@@ -41,6 +41,17 @@ docker compose build
 docker compose up kicad
 ```
 
+Codex connection:
+
+```powershell
+$env:KICAD_MCP_AUTH_TOKEN = "kicad-automation-local-dev-token-change-me-2026"
+codex mcp list
+```
+
+The project-scoped `.codex/config.toml` and the user-level Codex MCP registry both use the
+`kicad` server name. Restart Codex after changing the token or starting the service. The `/mcp`
+command should show the enabled KiCad server.
+
 Run integration tests:
 
 ```powershell

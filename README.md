@@ -46,12 +46,26 @@ MCP Pro is published only to host loopback:
 http://127.0.0.1:3334/mcp
 ```
 
+Codex reads the project-scoped `.codex/config.toml` only for a trusted project. The local
+development bearer token must also be present in the host environment before Codex starts:
+
+```powershell
+$env:KICAD_MCP_AUTH_TOKEN = "kicad-automation-local-dev-token-change-me-2026"
+```
+
+Restart Codex after configuring the server or changing this environment variable. Verify the
+connection with `codex mcp list` and the `/mcp` command in the Codex interface.
+
 Codex project config example:
 
 ```toml
 [mcp_servers.kicad]
 url = "http://127.0.0.1:3334/mcp"
+bearer_token_env_var = "KICAD_MCP_AUTH_TOKEN"
+required = true
+startup_timeout_sec = 60
 tool_timeout_sec = 120
+default_tools_approval_mode = "writes"
 ```
 
 ## Generate a Project
