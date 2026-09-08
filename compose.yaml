@@ -4,31 +4,97 @@ services:
       context: .
       dockerfile: docker/Dockerfile
       args:
-        KICAD_AUTO_IMAGE: ${KICAD_AUTO_IMAGE:-ghcr.io/inti-cmnb/kicad9_auto:1.9.0@sha256:5c7875356c8d96d4f8e562df958c809eb1731d582a3c784ebeb96aa939aa4f32}
-    image: local/kicad-automation:9.0.7-1
-    working_dir: /work
+        KICAD_MCP_PRO_VERSION: ${KICAD_MCP_PRO_VERSION:-3.34.0}
+    image: local/kicad-automation:10.0.4-mcp-pro
+    working_dir: /workspace
     volumes:
       - type: bind
         source: ${KICAD_PROJECT_DIR:-.}
-        target: /work
+        target: /workspace
+      - type: volume
+        source: kicad-runtime
+        target: /runtime
+      - type: volume
+        source: kicad-config
+        target: /config
+      - type: volume
+        source: kicad-cache
+        target: /cache
     environment:
-      HOME: /tmp/kicad-home
-      KICAD_CONFIG_HOME: /tmp/kicad-config
-      KICAD_REPORT_DIR: ${KICAD_REPORT_DIR:-.kicad-automation/reports}
+      HOME: /config/home
+      KICAD_WORKSPACE: /workspace
+      KICAD_API_SOCKET_PATH: /runtime/tmp/kicad/api.sock
+      KICAD_VALIDATE: /usr/local/bin/validate-kicad
+      KICAD_MCP_PROJECT_DIR: /workspace
+      KICAD_MCP_PROFILE: ${KICAD_MCP_PROFILE:-pcb_only}
+      KICAD_MCP_OPERATING_MODE: ${KICAD_MCP_OPERATING_MODE:-write}
+      KICAD_MCP_HOST: 0.0.0.0
+      KICAD_MCP_PORT: 3334
+      KICAD_MCP_MOUNT_PATH: /mcp
+      KICAD_MCP_STATEFUL_HTTP: "0"
+      KICAD_MCP_HTTP_BOUNDARY: loopback-proxy
+      KICAD_MCP_PUBLIC_BASE_URL: ${KICAD_MCP_PUBLIC_BASE_URL:-http://127.0.0.1:3334}
+      KICAD_MCP_AUTH_TOKEN: ${KICAD_MCP_AUTH_TOKEN:-kicad-automation-local-dev-token-change-me-2026}
+      DISPLAY: :99
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      XDG_CONFIG_HOME: /config
+      XDG_CACHE_HOME: /cache
+      TMPDIR: /runtime/tmp
+    ports:
+      - "127.0.0.1:${KICAD_MCP_PORT:-3334}:3334"
     init: true
-    network_mode: none
+    stdin_open: true
+    tty: false
+    command: ["serve", "${KICAD_ENTRYPOINT_PROJECT:-tests/fixtures/kicad-project/minimal.kicad_pcb}"]
 
-  freerouting:
-    image: ghcr.io/freerouting/freerouting:2.4.1@sha256:67794b10c4565c259461343cf6db4158e6a5c5baa7c2f93030d045974f313074
-    entrypoint: ["java", "-jar", "/app/freerouting-executable.jar"]
-    working_dir: /work
+  test:
+    image: local/kicad-automation:10.0.4-mcp-pro
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        KICAD_MCP_PRO_VERSION: ${KICAD_MCP_PRO_VERSION:-3.34.0}
+    working_dir: /workspace
     volumes:
       - type: bind
         source: ${KICAD_PROJECT_DIR:-.}
-        target: /work
+        target: /workspace
+      - type: volume
+        source: kicad-test-runtime
+        target: /runtime
+      - type: volume
+        source: kicad-test-config
+        target: /config
+      - type: volume
+        source: kicad-test-cache
+        target: /cache
     environment:
-      FREEROUTING__GUI__ENABLED: "false"
-      FREEROUTING__ANALYTICS__ENABLED: "false"
+      HOME: /config/home
+      KICAD_WORKSPACE: /workspace
+      KICAD_API_SOCKET_PATH: /runtime/tmp/kicad/api.sock
+      KICAD_VALIDATE: /usr/local/bin/validate-kicad
+      KICAD_MCP_PROJECT_DIR: /workspace
+      KICAD_MCP_PROFILE: ${KICAD_MCP_PROFILE:-pcb_only}
+      KICAD_MCP_OPERATING_MODE: ${KICAD_MCP_OPERATING_MODE:-write}
+      KICAD_MCP_HOST: 0.0.0.0
+      KICAD_MCP_PORT: 3334
+      KICAD_MCP_MOUNT_PATH: /mcp
+      KICAD_MCP_STATEFUL_HTTP: "0"
+      KICAD_MCP_HTTP_BOUNDARY: loopback-proxy
+      KICAD_MCP_PUBLIC_BASE_URL: ${KICAD_MCP_PUBLIC_BASE_URL:-http://127.0.0.1:3334}
+      KICAD_MCP_AUTH_TOKEN: ${KICAD_MCP_AUTH_TOKEN:-kicad-automation-local-dev-token-change-me-2026}
+      DISPLAY: :99
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      XDG_CONFIG_HOME: /config
+      XDG_CACHE_HOME: /cache
+      TMPDIR: /runtime/tmp
     init: true
-    network_mode: none
-    profiles: [routing]
+    command: ["test", "${KICAD_TEST_PROJECT:-tests/fixtures/kicad-project/minimal.kicad_pcb}"]
+
+volumes:
+  kicad-runtime:
+  kicad-config:
+  kicad-cache:
+  kicad-test-runtime:
+  kicad-test-config:
+  kicad-test-cache:

@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+target=${1:-tests/fixtures/kicad-project/minimal.kicad_pcb}
+stem=${target%.*}
+mcp_url="http://127.0.0.1:${KICAD_MCP_PORT:-3334}${KICAD_MCP_MOUNT_PATH:-/mcp}"
+mcp_pid=
+
+cleanup() {
+  if [[ -n "${mcp_pid:-}" ]] && kill -0 "$mcp_pid" >/dev/null 2>&1; then
+    kill -TERM "$mcp_pid" >/dev/null 2>&1 || true
+    wait "$mcp_pid" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT INT TERM
+
+mcp_call() {
+  local id=$1
+  local method=$2
+  local params=${3-}
+  local out=$4
+  local request
+  if [[ -z "$params" ]]; then
+    params='{}'
+  fi
+  request=$(jq -cn \
+    --argjson request_id "$id" \
+    --arg request_method "$method" \
+    --argjson request_params "$params" \
+    '{jsonrpc:"2.0",id:$request_id,method:$request_method,params:$request_params}')
+  curl --fail-with-body -sS -X POST "$mcp_url" \
+    -H 'Accept: application/json, text/event-stream' \
+    -H 'Content-Type: application/json' \
+    -H 'MCP-Protocol-Version: 2025-11-25' \
+    -H "Authorization: Bearer ${KICAD_MCP_AUTH_TOKEN}" \
+    --data "$request" \
+    > "$out"
+}
+
+version=$(kicad-cli version)
+[[ "$version" == 10.* ]] || { printf 'KiCad version is not 10.x: %s\n' "$version" >&2; exit 2; }
+
+xdpyinfo -display "$DISPLAY" >/dev/null
+[[ -S "$KICAD_API_SOCKET_PATH" ]] || { printf 'IPC socket missing: %s\n' "$KICAD_API_SOCKET_PATH" >&2; exit 2; }
+
+kicad-mcp-pro \
+  --transport streamable-http \
+  --host "${KICAD_MCP_HOST:-0.0.0.0}" \
+  --port "${KICAD_MCP_PORT:-3334}" \
+  >/runtime/test-kicad-mcp-pro.log 2>&1 &
+mcp_pid=$!
+
+for _ in $(seq 1 120); do
+  if mcp_call 1 initialize '{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"kicad-integration-test","version":"1.0.0"}}' /runtime/test-mcp-initialize.json 2>/runtime/test-mcp-initialize.err; then
+    break
+  fi
+  if ! kill -0 "$mcp_pid" >/dev/null 2>&1; then
+    printf 'kicad-mcp-pro exited early; see /runtime/test-kicad-mcp-pro.log\n' >&2
+    exit 2
+  fi
+  sleep 0.25
+done
+
+[[ -s /runtime/test-mcp-initialize.json ]] || {
+  printf 'MCP initialize failed; see /runtime/test-mcp-initialize.err and /runtime/test-kicad-mcp-pro.log\n' >&2
+  exit 2
+}
+
+mcp_call 2 "tools/list" '{}' /runtime/test-mcp-tools.json
+grep -q '"kicad_get_server_info"' /runtime/test-mcp-tools.json || { printf 'MCP tool list missing kicad_get_server_info\n' >&2; exit 2; }
+grep -q '"pcb_get_board_summary"' /runtime/test-mcp-tools.json || { printf 'MCP tool list missing pcb_get_board_summary\n' >&2; exit 2; }
+
+mcp_call 3 "tools/call" '{"name":"kicad_get_server_info","arguments":{}}' /runtime/test-mcp-server-info.json
+mcp_call 4 "tools/call" '{"name":"kicad_get_project_info","arguments":{}}' /runtime/test-mcp-project-info.json
+mcp_call 5 "tools/call" '{"name":"pcb_get_board_summary","arguments":{}}' /runtime/test-mcp-ipc-summary.json
+mcp_call 6 "tools/call" '{"name":"pcb_save","arguments":{}}' /runtime/test-mcp-save.json
+
+jq -e '.result.content[]?.text? | contains("Source: live-gui")' /runtime/test-mcp-ipc-summary.json >/dev/null || {
+  printf 'PCB summary did not prove live-gui IPC usage\n' >&2
+  exit 2
+}
+
+validate-kicad --project "/workspace/${stem}" --erc --drc >/runtime/test-validate.json
+
+eeschema "/workspace/${stem}.kicad_sch" >/runtime/eeschema.log 2>&1 &
+eeschema_pid=$!
+eeschema_ready=0
+for _ in $(seq 1 20); do
+  if kill -0 "$eeschema_pid" >/dev/null 2>&1; then
+    eeschema_ready=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$eeschema_ready" -ne 1 ]]; then
+  printf 'eeschema exited early; see /runtime/eeschema.log\n' >&2
+  exit 2
+fi
+kill -TERM "$eeschema_pid" >/dev/null 2>&1 || true
+wait "$eeschema_pid" >/dev/null 2>&1 || true
+
+printf '{"status":"ok","kicad_version":%s,"ipc_socket":%s,"mcp_url":%s,"artifacts":["/runtime/test-mcp-server-info.json","/runtime/test-mcp-project-info.json","/runtime/test-mcp-ipc-summary.json","/runtime/test-mcp-save.json","/runtime/test-validate.json"]}\n' \
+  "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$version")" \
+  "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$KICAD_API_SOCKET_PATH")" \
+  "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$mcp_url")"

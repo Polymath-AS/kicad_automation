@@ -1,0 +1,12 @@
+(kicad_sch
+	(version 20250114)
+	(generator "kicad-automation")
+	(generator_version "10.0")
+	(uuid 5f5a96bb-e80b-4e48-8463-46405b8de06a)
+	(paper "A4")
+	(lib_symbols)
+	(sheet_instances
+		(path "/" (page "1"))
+	)
+	(embedded_fonts no)
+)

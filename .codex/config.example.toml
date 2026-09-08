@@ -1,0 +1,4 @@
+[mcp_servers.kicad]
+url = "http://127.0.0.1:3334/mcp"
+bearer_token_env_var = "KICAD_MCP_AUTH_TOKEN"
+tool_timeout_sec = 120

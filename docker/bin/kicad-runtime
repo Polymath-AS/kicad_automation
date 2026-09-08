@@ -1,0 +1,326 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export DISPLAY=${DISPLAY:-:99}
+export LIBGL_ALWAYS_SOFTWARE=${LIBGL_ALWAYS_SOFTWARE:-1}
+export KICAD_WORKSPACE=${KICAD_WORKSPACE:-/workspace}
+export KICAD_MCP_PROJECT_DIR=${KICAD_MCP_PROJECT_DIR:-$KICAD_WORKSPACE}
+export KICAD_MCP_PROFILE=${KICAD_MCP_PROFILE:-pcb_only}
+export KICAD_MCP_OPERATING_MODE=${KICAD_MCP_OPERATING_MODE:-write}
+export KICAD_MCP_HOST=${KICAD_MCP_HOST:-0.0.0.0}
+export KICAD_MCP_PORT=${KICAD_MCP_PORT:-3334}
+export KICAD_MCP_MOUNT_PATH=${KICAD_MCP_MOUNT_PATH:-/mcp}
+export KICAD_MCP_STATEFUL_HTTP=${KICAD_MCP_STATEFUL_HTTP:-0}
+export KICAD_MCP_HTTP_BOUNDARY=${KICAD_MCP_HTTP_BOUNDARY:-loopback-proxy}
+export KICAD_MCP_PUBLIC_BASE_URL=${KICAD_MCP_PUBLIC_BASE_URL:-http://127.0.0.1:3334}
+export KICAD_MCP_AUTH_TOKEN=${KICAD_MCP_AUTH_TOKEN:-kicad-automation-local-dev-token-change-me-2026}
+export XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-/config}
+export XDG_CACHE_HOME=${XDG_CACHE_HOME:-/cache}
+export TMPDIR=${TMPDIR:-/runtime/tmp}
+export KICAD_API_SOCKET_PATH=${KICAD_API_SOCKET_PATH:-$TMPDIR/kicad/api.sock}
+
+XVFB_PID=
+KICAD_PID=
+MCP_PID=
+KICAD_RUNTIME_PROJECT_DIR=
+
+log() { printf '[%s] %s\n' "$1" "$2" >&2; }
+die() { log "$1" "$2"; exit "${3:-2}"; }
+
+cleanup() {
+  local status=$?
+  trap - INT TERM EXIT
+  for pid in "${MCP_PID:-}" "${KICAD_PID:-}" "${XVFB_PID:-}"; do
+    if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
+      kill -TERM "$pid" >/dev/null 2>&1 || true
+      wait "$pid" >/dev/null 2>&1 || true
+    fi
+  done
+  if [[ -n "$KICAD_RUNTIME_PROJECT_DIR" ]]; then
+    local lock lock_host lock_user
+    for lock in "$KICAD_RUNTIME_PROJECT_DIR"/~*.lck; do
+      [[ -f "$lock" ]] || continue
+      lock_host=$(jq -r '.hostname // empty' "$lock" 2>/dev/null || true)
+      lock_user=$(jq -r '.username // empty' "$lock" 2>/dev/null || true)
+      if [[ "$lock_user" == root && "$lock_host" == "$(hostname)" ]]; then
+        rm -f "$lock"
+      fi
+    done
+    case "$KICAD_RUNTIME_PROJECT_DIR" in
+      /workspace/tests/fixtures/*)
+        rm -rf "$KICAD_RUNTIME_PROJECT_DIR/.history"
+        rm -f "$KICAD_RUNTIME_PROJECT_DIR"/*.kicad_prl
+        ;;
+    esac
+  fi
+  exit "$status"
+}
+
+trap cleanup INT TERM EXIT
+
+safe_workspace_path() {
+  local value=${1:-}
+  [[ -n "$value" ]] || die project "missing project or board path"
+  python3 - "$KICAD_WORKSPACE" "$value" <<'PY'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1]).resolve()
+candidate = Path(sys.argv[2])
+path = candidate.resolve() if candidate.is_absolute() else (root / candidate).resolve()
+try:
+    path.relative_to(root)
+except ValueError:
+    raise SystemExit("path is outside /workspace")
+print(path)
+PY
+}
+
+project_dir_from_target() {
+  local target=$1
+  if [[ -d "$target" ]]; then
+    printf '%s\n' "$target"
+  else
+    dirname "$target"
+  fi
+}
+
+board_from_target() {
+  local target=$1
+  case "$target" in
+    *.kicad_pcb) printf '%s\n' "$target" ;;
+    *.kicad_pro|*.kicad_sch) printf '%s\n' "${target%.*}.kicad_pcb" ;;
+    *) printf '%s\n' "$target.kicad_pcb" ;;
+  esac
+}
+
+clear_project_locks() {
+  local project_dir=$1
+  local lock lock_host lock_user
+  for lock in "$project_dir"/~*.lck; do
+    [[ -f "$lock" ]] || continue
+    lock_host=$(jq -r '.hostname // empty' "$lock" 2>/dev/null || true)
+    lock_user=$(jq -r '.username // empty' "$lock" 2>/dev/null || true)
+    if [[ "$lock_user" == root && "$lock_host" =~ ^[0-9a-f]{12}$ ]]; then
+      rm -f "$lock"
+      log project "removed stale Docker lock $lock"
+    else
+      die project "project lock is active or unrecognized: $lock"
+    fi
+  done
+}
+
+configure_kicad() {
+  mkdir -p "$XDG_CONFIG_HOME/kicad/10.0" "$XDG_CACHE_HOME/kicad/10.0" "$TMPDIR/kicad" /runtime
+  if [[ ! -f "$XDG_CONFIG_HOME/kicad/10.0/kicad_common.json" ]]; then
+    cat > "$XDG_CONFIG_HOME/kicad/10.0/kicad_common.json" <<'JSON'
+{
+  "api": {
+    "enable_server": true
+  },
+  "auto_backup": {
+    "enabled": false
+  },
+  "system": {
+    "first_run_shown": true,
+    "local_history_enabled": false
+  },
+  "meta": {
+    "version": 6
+  }
+}
+JSON
+  else
+    jq '.api.enable_server = true | .auto_backup.enabled = false | .system.local_history_enabled = false' \
+      "$XDG_CONFIG_HOME/kicad/10.0/kicad_common.json" \
+      > "$XDG_CONFIG_HOME/kicad/10.0/kicad_common.json.tmp"
+    mv "$XDG_CONFIG_HOME/kicad/10.0/kicad_common.json.tmp" \
+      "$XDG_CONFIG_HOME/kicad/10.0/kicad_common.json"
+  fi
+
+  if [[ ! -f "$XDG_CONFIG_HOME/kicad/10.0/kicad.json" ]]; then
+    cat > "$XDG_CONFIG_HOME/kicad/10.0/kicad.json" <<'JSON'
+{
+  "meta": {
+    "version": 0
+  },
+  "system": {
+    "first_run_shown": false
+  }
+}
+JSON
+  fi
+}
+
+start_xvfb() {
+  Xvfb "$DISPLAY" -screen 0 1920x1080x24 -nolisten tcp > /runtime/xvfb.log 2>&1 &
+  XVFB_PID=$!
+  for _ in $(seq 1 80); do
+    if xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
+      log Xvfb "display $DISPLAY is ready"
+      return
+    fi
+    if ! kill -0 "$XVFB_PID" >/dev/null 2>&1; then
+      die Xvfb "Xvfb exited early; see /runtime/xvfb.log"
+    fi
+    sleep 0.25
+  done
+  die Xvfb "display $DISPLAY did not become ready"
+}
+
+start_pcbnew() {
+  local board=$1
+  [[ -f "$board" ]] || die project "board not found: $board"
+  rm -f "$TMPDIR"/kicad/api*.sock "$TMPDIR"/kicad/api.lock 2>/dev/null || true
+  mkdir -p "$TMPDIR/kicad"
+  KICAD_API_SOCKET="$KICAD_API_SOCKET_PATH" pcbnew "$board" > /runtime/pcbnew.log 2>&1 &
+  KICAD_PID=$!
+  log KiCad "started pcbnew pid=$KICAD_PID board=$board"
+}
+
+wait_for_ipc_socket() {
+  for _ in $(seq 1 160); do
+    if [[ -S "$KICAD_API_SOCKET_PATH" ]]; then
+      log IPC "socket is present at $KICAD_API_SOCKET_PATH"
+      return
+    fi
+    if ! kill -0 "$KICAD_PID" >/dev/null 2>&1; then
+      die KiCad "pcbnew exited before IPC socket appeared; see /runtime/pcbnew.log"
+    fi
+    sleep 0.25
+  done
+  die IPC "socket did not appear at $KICAD_API_SOCKET_PATH"
+}
+
+complete_first_run_setup() {
+  local missing_window=0
+  for _ in $(seq 1 120); do
+    local setup_window geometry width height
+    setup_window=$(xdotool search --name 'KiCad Setup' 2>/dev/null | head -1 || true)
+    if [[ -z "$setup_window" ]]; then
+      missing_window=$((missing_window + 1))
+      if (( missing_window >= 20 )); then
+        return
+      fi
+      sleep 0.25
+      continue
+    fi
+    missing_window=0
+    geometry=$(xdotool getwindowgeometry --shell "$setup_window")
+    width=$(printf '%s\n' "$geometry" | awk -F= '$1 == "WIDTH" { print $2 }')
+    height=$(printf '%s\n' "$geometry" | awk -F= '$1 == "HEIGHT" { print $2 }')
+    printf 'clicking KiCad Setup window %s\n' "$setup_window" >>/runtime/kicad-setup.log
+    xdotool mousemove --sync --window "$setup_window" "$((width - 148))" "$((height - 27))" \
+      >>/runtime/kicad-setup.log 2>&1 || true
+    xdotool click 1 >>/runtime/kicad-setup.log 2>&1 || true
+    sleep 0.5
+  done
+  if xdotool search --name 'KiCad Setup' >/dev/null 2>&1; then
+    die KiCad "first-run setup dialog did not close; see /runtime/kicad-setup.log"
+  fi
+}
+
+wait_for_ipc_ready() {
+  for _ in $(seq 1 160); do
+    if /opt/kicad-mcp-pro/bin/python - <<'PY' >/runtime/ipc-probe.log 2>&1
+import os
+
+from kipy.kicad import KiCad
+
+client = KiCad(
+    socket_path=os.environ["KICAD_API_SOCKET"],
+    client_name="kicad-runtime-readiness",
+    timeout_ms=1000,
+)
+client.get_version()
+client.get_board()
+PY
+    then
+      log IPC "KiCad IPC is ready and the board is open"
+      return
+    fi
+    if ! kill -0 "$KICAD_PID" >/dev/null 2>&1; then
+      die KiCad "pcbnew exited during IPC readiness; see /runtime/pcbnew.log"
+    fi
+    sleep 0.25
+  done
+  die IPC "KiCad IPC did not become request-ready with an open board; see /runtime/ipc-probe.log"
+}
+
+start_mcp_http() {
+  kicad-mcp-pro \
+    --transport streamable-http \
+    --host "$KICAD_MCP_HOST" \
+    --port "$KICAD_MCP_PORT" \
+    > /runtime/kicad-mcp-pro.log 2>&1 &
+  MCP_PID=$!
+  log MCP "started kicad-mcp-pro pid=$MCP_PID port=$KICAD_MCP_PORT"
+}
+
+wait_for_mcp_http() {
+  local url="http://127.0.0.1:${KICAD_MCP_PORT}${KICAD_MCP_MOUNT_PATH}"
+  for _ in $(seq 1 120); do
+    if curl --fail-with-body -sS -X POST "$url" \
+      -H 'Accept: application/json, text/event-stream' \
+      -H 'Content-Type: application/json' \
+      -H "Authorization: Bearer ${KICAD_MCP_AUTH_TOKEN}" \
+      --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"kicad-runtime","version":"1.0.0"}}}' \
+      >/runtime/mcp-initialize.json 2>/runtime/mcp-initialize.err; then
+      log MCP "HTTP endpoint is ready at $url"
+      return
+    fi
+    if ! kill -0 "$MCP_PID" >/dev/null 2>&1; then
+      die MCP "kicad-mcp-pro exited early; see /runtime/kicad-mcp-pro.log"
+    fi
+    sleep 0.25
+  done
+  die MCP "HTTP endpoint did not become ready; see /runtime/kicad-mcp-pro.log and /runtime/mcp-initialize.err"
+}
+
+run_with_kicad() {
+  local target=$1
+  shift
+  local selected board project_dir
+  selected=$(safe_workspace_path "$target") || die project "invalid path: $target"
+  board=$(board_from_target "$selected")
+  project_dir=$(project_dir_from_target "$selected")
+  KICAD_RUNTIME_PROJECT_DIR="$project_dir"
+  export KICAD_MCP_PROJECT_DIR="$project_dir"
+  clear_project_locks "$project_dir"
+  configure_kicad
+  start_xvfb
+  start_pcbnew "$board"
+  wait_for_ipc_socket
+  complete_first_run_setup
+  export KICAD_API_SOCKET="ipc://$KICAD_API_SOCKET_PATH"
+  wait_for_ipc_ready
+  "$@"
+}
+
+serve_mcp() {
+  start_mcp_http
+  wait_for_mcp_http
+  wait "$MCP_PID"
+}
+
+command=${1:-serve}
+case "$command" in
+  serve)
+    target=${2:-tests/fixtures/kicad-project/minimal.kicad_pcb}
+    run_with_kicad "$target" serve_mcp
+    ;;
+  test)
+    target=${2:-tests/fixtures/kicad-project/minimal.kicad_pcb}
+    run_with_kicad "$target" run-kicad-integration-tests "$target"
+    ;;
+  validate)
+    shift
+    exec validate-kicad "$@"
+    ;;
+  shell)
+    shift
+    exec /bin/bash "$@"
+    ;;
+  *)
+    die runtime "commands: serve, test, validate, shell"
+    ;;
+esac
