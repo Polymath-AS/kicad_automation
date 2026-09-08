@@ -1,0 +1,7 @@
+.git
+references
+analysis/session
+analysis/*.json
+**/__pycache__
+**/*.pyc
+.kicad-automation

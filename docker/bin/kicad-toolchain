@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 2; }
+need_file() { [[ -f "$1" ]] || die "File not found: $1"; }
+safe_rel() {
+  local value=${1//\\//}
+  [[ "$value" != /* && "$value" != *".."* ]] || die "Use a path relative to the mounted project root: $1"
+  printf '%s' "$value"
+}
+report_dir() {
+  local value=${KICAD_REPORT_DIR:-.kicad-automation/reports}
+  value=$(safe_rel "$value")
+  mkdir -p "$value"
+  printf '%s' "$value"
+}
+project_stem() {
+  local value
+  value=$(safe_rel "$1")
+  value=${value%.kicad_pro}; value=${value%.kicad_sch}; value=${value%.kicad_pcb}
+  printf '%s' "$value"
+}
+
+doctor() {
+  local failed=0
+  for tool in kicad-cli kibot eeschema_do generate_interactive_bom.py kibom kicad-diff.py kikit git jq pdfinfo python3 xvfb-run xauth; do
+    if command -v "$tool" >/dev/null 2>&1; then
+      printf '%-28s %s\n' "$tool" "$(command -v "$tool")"
+    else
+      printf '%-28s MISSING\n' "$tool"
+      failed=1
+    fi
+  done
+  printf '\nVersions\n'
+  kicad-cli version
+  kibot --version 2>&1 | head -n 2 || true
+  kikit --version 2>&1 | head -n 2 || true
+  python3 --version
+  printf '\nKiCad data\n'
+  env | sort | grep -E '^KICAD[0-9_].*DIR=' || true
+  [[ $failed -eq 0 ]] || die 'One or more required tools are missing'
+}
+
+check() {
+  [[ $# -eq 1 ]] || die 'Usage: kicad-toolchain check path/to/project[.kicad_pro]'
+  local stem out drc erc
+  stem=$(project_stem "$1"); out=$(report_dir)
+  need_file "$stem.kicad_pcb"; need_file "$stem.kicad_sch"
+  drc="$out/$(basename "$stem")-drc.json"
+  erc="$out/$(basename "$stem")-erc.json"
+  set +e
+  kicad-cli pcb drc --format json --severity-all --schematic-parity --exit-code-violations --output "$drc" "$stem.kicad_pcb"
+  local drc_code=$?
+  kicad-cli sch erc --format json --severity-all --exit-code-violations --output "$erc" "$stem.kicad_sch"
+  local erc_code=$?
+  set -e
+  printf '\nDRC summary\n'; python3 /opt/kicad-automation/summarize_checks.py "$drc" --limit 5
+  printf '\nERC summary\n'; python3 /opt/kicad-automation/summarize_checks.py "$erc" --limit 5
+  [[ $drc_code -eq 0 && $erc_code -eq 0 ]] || die "Checks failed (DRC=$drc_code ERC=$erc_code)"
+}
+
+kibot_run() {
+  [[ $# -ge 1 && $# -le 2 ]] || die 'Usage: kicad-toolchain kibot path/to/config.kibot.yaml [project.kicad_pro]'
+  local config project
+  config=$(safe_rel "$1"); need_file "$config"
+  if [[ $# -eq 2 ]]; then
+    project=$(safe_rel "$2"); need_file "$project"
+    kibot -c "$config" -e "${project%.kicad_pro}.kicad_sch" -b "${project%.kicad_pro}.kicad_pcb"
+  else
+    kibot -c "$config"
+  fi
+}
+
+ibom() {
+  [[ $# -eq 1 ]] || die 'Usage: kicad-toolchain ibom path/to/board.kicad_pcb'
+  local board out
+  board=$(safe_rel "$1"); need_file "$board"; out=$(report_dir)
+  xvfb-run -a generate_interactive_bom.py --no-browser --dest-dir "/work/$out" "$board"
+}
+
+case "${1:-doctor}" in
+  doctor) shift || true; doctor "$@" ;;
+  check) shift; check "$@" ;;
+  kibot) shift; kibot_run "$@" ;;
+  ibom) shift; ibom "$@" ;;
+  shell) shift; exec /bin/bash "$@" ;;
+  exec) shift; [[ $# -gt 0 ]] || die 'Usage: kicad-toolchain exec command [args...]'; exec "$@" ;;
+  *) die 'Commands: doctor, check, kibot, ibom, shell, exec' ;;
+esac

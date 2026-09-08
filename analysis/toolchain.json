@@ -1,0 +1,51 @@
+{
+  "cli": {
+    "command": [
+      "C:/Program Files/KiCad/9.0/bin/kicad-cli.exe",
+      "version"
+    ],
+    "exit_code": 0,
+    "output": "9.0.7\n09:01:23: Error: Can't create registry key 'HKCU\\Software\\kicad-cli' (error 5: Access is denied.)\n09:01:23: Error: Can't open registry key 'HKCU\\Software\\kicad-cli' (error 2: The system cannot find the file specified.)"
+  },
+  "java": {
+    "command": [
+      "C:/Program Files/DIYLC/jre17/bin/java.exe",
+      "-version"
+    ],
+    "exit_code": 0,
+    "output": "openjdk version \"17.0.14\" 2025-01-21\nOpenJDK Runtime Environment Temurin-17.0.14+7 (build 17.0.14+7)\nOpenJDK 64-Bit Server VM Temurin-17.0.14+7 (build 17.0.14+7, mixed mode, sharing)"
+  },
+  "drc": {
+    "exit_code": 0,
+    "error": null,
+    "supported_flags": {
+      "--format": true,
+      "--schematic-parity": true,
+      "--exit-code-violations": true
+    }
+  },
+  "erc": {
+    "exit_code": 0,
+    "error": null,
+    "supported_flags": {
+      "--format": true,
+      "--exit-code-violations": true
+    }
+  },
+  "pcbnew": {
+    "command": [
+      "C:/Program Files/KiCad/9.0/bin/python.exe",
+      "-c",
+      "import json,pcbnew as p; print(json.dumps({'version':p.GetBuildVersion(),'symbols':{n:hasattr(p,n) for n in ['LoadBoard','GetSettingsManager','ZONE_FILLER','ExportSpecctraDSN','ImportSpecctraSES']}}))"
+    ],
+    "exit_code": 0,
+    "output": "{\"version\": \"9.0.7\", \"symbols\": {\"LoadBoard\": true, \"GetSettingsManager\": true, \"ZONE_FILLER\": true, \"ExportSpecctraDSN\": true, \"ImportSpecctraSES\": true}}"
+  },
+  "router_jar": {
+    "path": "C:\\Users\\fnk\\Documents\\KiCad\\6.0\\3rdparty\\plugins\\app_freerouting_kicad-plugin\\jar\\freerouting-1.6.2.jar",
+    "exists": true,
+    "runtime_compatibility": "NOT_TESTED",
+    "sha256": "c1034faf48a1a1ce6a7ac2911c36bac45835ac2ce9633d5feffc809447661f9c"
+  },
+  "scope": "Executable probes only; library paths, saved rules and router round-trip need separate checks."
+}

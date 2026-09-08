@@ -1,0 +1,34 @@
+services:
+  kicad:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        KICAD_AUTO_IMAGE: ${KICAD_AUTO_IMAGE:-ghcr.io/inti-cmnb/kicad9_auto:1.9.0@sha256:5c7875356c8d96d4f8e562df958c809eb1731d582a3c784ebeb96aa939aa4f32}
+    image: local/kicad-automation:9.0.7-1
+    working_dir: /work
+    volumes:
+      - type: bind
+        source: ${KICAD_PROJECT_DIR:-.}
+        target: /work
+    environment:
+      HOME: /tmp/kicad-home
+      KICAD_CONFIG_HOME: /tmp/kicad-config
+      KICAD_REPORT_DIR: ${KICAD_REPORT_DIR:-.kicad-automation/reports}
+    init: true
+    network_mode: none
+
+  freerouting:
+    image: ghcr.io/freerouting/freerouting:2.4.1@sha256:67794b10c4565c259461343cf6db4158e6a5c5baa7c2f93030d045974f313074
+    entrypoint: ["java", "-jar", "/app/freerouting-executable.jar"]
+    working_dir: /work
+    volumes:
+      - type: bind
+        source: ${KICAD_PROJECT_DIR:-.}
+        target: /work
+    environment:
+      FREEROUTING__GUI__ENABLED: "false"
+      FREEROUTING__ANALYTICS__ENABLED: "false"
+    init: true
+    network_mode: none
+    profiles: [routing]
