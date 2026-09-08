@@ -54,6 +54,31 @@ url = "http://127.0.0.1:3334/mcp"
 tool_timeout_sec = 120
 ```
 
+## Generate a Project
+
+MCP Pro exposes `kicad_create_new_project` in the default write-enabled profile. Generate a
+complete KiCad project directory under the mounted `/workspace`; do not create a PCB-only file:
+
+```text
+my-board/
+  my-board.kicad_pro
+  my-board.kicad_sch
+  my-board.kicad_pcb
+```
+
+The current runtime opens a board before starting MCP so that live IPC is ready. Bootstrap a new
+project while the service is running against the fixture or another existing board, then restart
+the service against the generated board:
+
+```powershell
+.\tools\kicad-docker.ps1 up `
+  -ProjectRoot "C:\Users\fnk\Documents\KiCad\Projects" `
+  -Target "my-board/my-board.kicad_pcb"
+```
+
+The generated project remains in the mounted host directory. After restarting, use MCP Pro for
+inspection/editing and `validate-kicad --erc --drc` before continuing.
+
 ## MCP Surface
 
 Use KiCad MCP Pro tool names directly. The default `pcb_only` profile exposes the live PCB

@@ -51,3 +51,22 @@ Validation and exports use `/usr/local/bin/validate-kicad`; pass `--erc`, `--drc
 `--gerbers`, `--drill`, `--pdf`, or `--bom`, or use `--all`.
 
 The image intentionally does not include the old KiCad 9 automation flow, SWIG PCB edit wrapper, repo-owned MCP server, or Freerouting sidecar.
+
+## Project Generation
+
+Use the upstream MCP Pro tool `kicad_create_new_project` to create a complete project in the
+mounted workspace. The target directory should contain the `.kicad_pro`, `.kicad_sch`, and
+`.kicad_pcb` files together.
+
+The runtime currently requires an existing board as its initial IPC document. For bootstrap, run
+the service against the fixture or another existing board, create the new project under
+`/workspace`, then restart with the new board as the target:
+
+```powershell
+.\tools\kicad-docker.ps1 up `
+  -ProjectRoot "C:\Users\fnk\Documents\KiCad\Projects" `
+  -Target "my-board/my-board.kicad_pcb"
+```
+
+This opens the generated board through live KiCad IPC. Continue with MCP inspection/editing,
+`pcb_save`, and the authoritative `validate-kicad --erc --drc` command.
