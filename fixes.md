@@ -158,7 +158,7 @@ source and limitations.
 ## Implementation milestones
 
 - [x] **M1:** Check in this evidence-based backlog.
-- [ ] **M2:** Add and test the repository MCP client; replace new ad-hoc HTTP usage in docs/scripts.
+- [x] **M2:** Add and test the repository MCP client; replace new ad-hoc HTTP usage in docs/scripts.
 - [ ] **M3:** Persist validation artifacts under the mounted workspace and test the path contract.
 - [ ] **M4:** Add an integration regression for KiCad 10 pad-to-pad routing and fix upstream or carry
   a narrowly versioned compatibility patch.
