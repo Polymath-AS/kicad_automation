@@ -107,14 +107,25 @@ report_count() {
   jq -r '((.violations // []) | length) + ((.unconnected_items // []) | length) + ((.schematic_parity // []) | length) + ([.sheets[]?.violations[]?] | length)' "$report" 2>/dev/null || printf '%s\n' -1
 }
 
+report_summary() {
+  local report=$1
+  if [[ ! -f "$report" ]]; then
+    printf '%s\n' null
+    return
+  fi
+  python3 /usr/local/lib/kicad-automation/summarize-kicad-report.py "$report" 2>/dev/null || printf '%s\n' null
+}
+
 record_check() {
   local name=$1 code=$2 report=$3
-  local count report_exists status
+  local count report_exists status summary
   report_exists=false
   count=-1
+  summary=null
   if [[ -f "$report" ]]; then
     report_exists=true
     count=$(report_count "$report")
+    summary=$(report_summary "$report")
   fi
   status=pass
   if [[ "$code" -ne 0 ]]; then
@@ -140,7 +151,8 @@ record_check() {
     --argjson exit_code "$code" \
     --argjson report_exists "$report_exists" \
     --argjson violation_count "$count" \
-    '{name:$name,status:$status,exit_code:$exit_code,report:$report,report_exists:$report_exists,violation_count:$violation_count,log:$log}')")
+    --argjson summary "$summary" \
+    '{name:$name,status:$status,exit_code:$exit_code,report:$report,report_exists:$report_exists,violation_count:$violation_count,summary:$summary,log:$log}')")
 }
 
 run_check() {

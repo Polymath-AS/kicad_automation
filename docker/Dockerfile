@@ -27,14 +27,17 @@ COPY docker/bin/kicad-runtime /usr/local/bin/kicad-runtime
 COPY docker/bin/run-kicad-integration-tests /usr/local/bin/run-kicad-integration-tests
 COPY docker/bin/validate-kicad /usr/local/bin/validate-kicad
 COPY scripts/validate-kicad.sh /usr/local/lib/kicad-automation/validate-kicad.sh
+COPY scripts/summarize_kicad_report.py /usr/local/lib/kicad-automation/summarize-kicad-report.py
 
 RUN sed -i 's/\r$//' \
       /usr/local/bin/kicad-runtime \
       /usr/local/bin/run-kicad-integration-tests /usr/local/bin/validate-kicad \
       /usr/local/lib/kicad-automation/validate-kicad.sh \
+      /usr/local/lib/kicad-automation/summarize-kicad-report.py \
  && chmod 0755 /usr/local/bin/kicad-runtime \
       /usr/local/bin/run-kicad-integration-tests /usr/local/bin/validate-kicad \
       /usr/local/lib/kicad-automation/validate-kicad.sh \
+      /usr/local/lib/kicad-automation/summarize-kicad-report.py \
  && ln -sf /usr/bin/fdfind /usr/local/bin/fd
 
 ENV LANG=C.UTF-8 \

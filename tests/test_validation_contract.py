@@ -13,6 +13,8 @@ class ValidationContractTests(unittest.TestCase):
             script,
         )
         self.assertIn("workspace_relative_report_dir", script)
+        self.assertIn("summarize-kicad-report.py", script)
+        self.assertIn("summary:$summary", script)
         self.assertNotIn("out=/runtime/reports", script)
 
     def test_workspace_automation_outputs_are_gitignored(self):
