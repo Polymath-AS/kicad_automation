@@ -95,6 +95,8 @@ def request(
         raise McpClientError(f"HTTP {exc.code} from MCP endpoint: {detail}") from exc
     except urllib.error.URLError as exc:
         raise McpClientError(f"cannot reach MCP endpoint {url}: {exc.reason}") from exc
+    except OSError as exc:
+        raise McpClientError(f"MCP connection failed for {url}: {exc}") from exc
 
     if "error" in result:
         raise McpClientError(f"JSON-RPC error: {json.dumps(result['error'], sort_keys=True)}")

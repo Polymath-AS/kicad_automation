@@ -5,6 +5,7 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -91,6 +92,11 @@ class McpClientTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(mcp.McpClientError, "JSON-RPC error"):
             mcp.request(self.url, "test-token", "missing", {}, 2)
+
+    def test_bare_socket_error_is_normalized_for_wait_retries(self):
+        with mock.patch.object(mcp.urllib.request, "urlopen", side_effect=ConnectionResetError("reset")):
+            with self.assertRaisesRegex(mcp.McpClientError, "MCP connection failed"):
+                mcp.request(self.url, "test-token", "initialize", {}, 2)
 
     def test_schema_fails_clearly_when_profile_hides_tool(self):
         TestHandler.response_body = {"jsonrpc": "2.0", "id": 1, "result": {"tools": []}}
