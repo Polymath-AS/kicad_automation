@@ -33,6 +33,7 @@ class TestHandler(BaseHTTPRequestHandler):
             "path": self.path,
             "authorization": self.headers.get("Authorization"),
             "accept": self.headers.get("Accept"),
+            "mcp-protocol-version": self.headers.get("MCP-Protocol-Version"),
             "body": json.loads(self.rfile.read(length)),
         }
         encoded = json.dumps(type(self).response_body).encode("utf-8")
@@ -75,6 +76,7 @@ class McpClientTests(unittest.TestCase):
         self.assertEqual(TestHandler.received["path"], "/mcp")
         self.assertEqual(TestHandler.received["authorization"], "Bearer test-token")
         self.assertIn("text/event-stream", TestHandler.received["accept"])
+        self.assertEqual(TestHandler.received.get("mcp-protocol-version"), mcp.PROTOCOL_VERSION)
         self.assertEqual(TestHandler.received["body"]["method"], "tools/call")
         self.assertEqual(TestHandler.received["body"]["params"]["name"], "pcb_save")
 
@@ -109,6 +111,11 @@ class McpClientTests(unittest.TestCase):
     def test_parse_json_argument_rejects_invalid_json(self):
         with self.assertRaisesRegex(mcp.McpClientError, "invalid JSON"):
             mcp.parse_json_argument("not-json")
+
+    def test_domain_failure_is_not_hidden_by_mcp_transport_success(self):
+        self.assertTrue(mcp.result_is_error({
+            "result": {"isError": False, "structuredContent": {"status": "failure"}}
+        }))
 
     def test_powershell_entrypoints_use_supported_client(self):
         direct_wrapper = (ROOT / "tools" / "kicad-mcp.ps1").read_text(encoding="utf-8")

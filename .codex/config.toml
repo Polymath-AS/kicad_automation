@@ -32,6 +32,7 @@ enabled_tools = [
   "pcb_move_component",
   "pcb_move_footprint",
   "pcb_route_trace",
+  "route_from_pad_to_pad",
   "pcb_save",
   "sch_build_circuit",
   "sch_add_no_connect",

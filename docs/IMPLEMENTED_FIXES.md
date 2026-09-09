@@ -69,6 +69,32 @@ and file-backed schematic tools in one server session, followed by clean ERC and
 Verification: the image build checks representative dotted, canonical, and IPC enum aliases after
 applying the version-pinned patch.
 
+### Shared mutation, routing and placement contracts
+
+- `scripts/kicad_contracts.py` provides a stable superset catalog with explicit backend and
+  availability metadata, typed `success`/`partial`/`failure` operation envelopes, dirty/saved/
+  `document_revision` state, stale-revision rejection, deterministic inspection UUIDs, qualified
+  footprint-ID preservation, selective DRC exclusion previews, board hole-floor classification,
+  pin-addressed no-connect resolution, ratsnest fallback data, precise schematic-builder schemas,
+  and unambiguous project destination paths.
+- `scripts/kicad_topology.py` provides obstacle-aware grid routing with Edge.Cuts bounds, pads,
+  keepouts, existing copper, layers, clearance, dry-run plans, structured blocking objects and
+  atomic live-adapter rollback.
+- `scripts/kicad_placement.py` derives hard placement bounds from Edge.Cuts and enforces courtyard
+  overlap, connector-edge, antenna-keepout and locked-part constraints without mutating an
+  unsatisfiable board.
+- `scripts/kicad_schematic.py` validates complete nested requests before mutation and resolves
+  canonical component pins (including USB shield names such as `SH`).
+- `preserve_footprint_ids` reports library-qualified schematic/PCB footprint parity and stable
+  mismatch UUIDs so synchronization cannot silently drop a library prefix.
+- `scripts/kicad_promotion.py` computes a reviewed copper delta and supplies stale-source checks,
+  save/re-read validation and IPC rollback hooks. Automatic promotion remains opt-in.
+
+Verification: `tests/test_design_contracts.py` covers stale writes, postcondition rollback,
+blocking-object dry runs, constrained placement success/failure, named-pin no-connects, nested
+schema rejection, selective exclusions, board-hole classification, truthful delete failures and
+stable route-pad schema handling. The full Python suite passed with 44 tests.
+
 ## Partially shipped
 
 ### KiCadRoutingTools candidate backend (M6)
@@ -99,24 +125,34 @@ coverage; differential and plane dispatch are implemented but electrical fixture
 - The image build executes `docker/tests/verify_kicad_mcp_compat.py` after patching, so dependency
   drift or a failed patch stops the build.
 
-Remaining before this is complete: run route creation, save, and DRC on a disposable two-pad
-fixture. The upstream tool is currently exposed only in experimental operating mode, so the
-normal write-mode service cannot run that integration safely yet.
+`scripts/pad_to_pad_regression.py` now resolves two named pads through `pcb_get_pads`, derives the
+advertised `route_from_pad_to_pad` schema, creates copper with the patched KiCad 10 lookup, saves,
+reads the live board back, checks the created track's net and runs the pinned Docker validator.
+
+Verification: with `KICAD_MCP_OPERATING_MODE=experimental` on an isolated port, KiCad 10.0.4
+created the J1.1-to-J2.1 SIGNAL route, saved it, read back two live-gui tracks, and DRC reported
+zero `unconnected_items`. The only remaining DRC findings were the fixture's two pre-existing
+`footprint_symbol_mismatch` warnings. The source fixture was copied to a disposable directory and
+was not modified.
 
 ## Still open
 
-- Pin-addressed schematic no-connect placement and corrected ERC coordinate units.
-- Precise nested schematic-builder schemas.
-- Explicit save/revision/transaction semantics for mutations.
-- Constraint-aware auto-placement.
-- Consistent partial-success operation envelopes.
-- KiCad 10 ratsnest fallback.
-- Selective DRC exclusions, stable inspection UUIDs, and project path semantics.
-- Reviewed live IPC promotion/rollback of obstacle-aware routing candidates.
+- Live upstream wiring of pin-addressed schematic no-connect placement and corrected ERC
+  coordinate units (the adapter contract and rollback path are implemented and unit-tested).
+- Live upstream wiring of precise nested schematic-builder schemas and save/revision semantics
+  (the repository contract is implemented and unit-tested).
+- Live upstream placement promotion and complete connector/module intent fixtures.
+- KiCad 10 ratsnest fallback consumption by the upstream tool (the fallback data contract is
+  implemented and unit-tested).
+- Selective DRC exclusions, stable inspection UUIDs, and project path semantics are implemented
+  in the repository adapter; selective upstream MCP exposure remains to be exercised live.
+- Reviewed live IPC promotion/rollback of obstacle-aware routing candidates (adapter hooks are
+  implemented; an interrupted real promotion/reopen regression remains).
 
 ## Current verification baseline
 
-- Python unit/contract suite: 30 tests passing, including eight candidate-routing tests.
+- Python unit/contract suite: 44 tests passing, including candidate-routing and transactional
+  routing/placement regressions.
 - Container build: `local/kicad-automation:10.0.4-mcp-pro` builds with the compatibility test.
 - Fixture validation: ERC clean, DRC clean, detailed reports persisted under
   `.kicad-automation/reports/`.

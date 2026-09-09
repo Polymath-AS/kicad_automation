@@ -167,9 +167,12 @@ After building, `.\tools\kicad-routing.cmd mcp` starts a stdio MCP server. Its J
 on stdin/stdout; Compose diagnostics go to stderr. Add `.codex/routing.example.toml` to the MCP
 client's project configuration and reload once. This does not require changing MCP Pro profiles.
 
-1. `routing_tools_info()` reports backend/revision and source/output boundaries.
+1. `routing_tools_info()` reports backend/revision, source/output boundaries and whether topology
+   preview, dry-run blocking reports and live promotion are available.
 2. `routing_run_candidate(plan)` accepts a typed nested plan and returns the job result.
-3. `routing_job_result(job_id)` reads a persisted result after reconnecting.
+3. `routing_plan_trace(board, request)` is a pure structured-board dry-run that returns planned
+   segments or blocking object UUIDs/coordinates without writing a board.
+4. `routing_job_result(job_id)` reads a persisted result after reconnecting.
 
 Calls are synchronous. Use the CLI for jobs longer than the client's timeout. Disconnecting is
 not proof of completion. A killed container may leave a `running` checkpoint; treat it as
@@ -226,11 +229,12 @@ correct widths/clearances; unrelated nets and pin assignments remain unchanged.
 
 ### R3 — Reviewed live promotion and rollback
 
-Compute a geometry-aware copper delta and separate footprint movement report. Reject stale input,
-changed net assignments and removed unrelated copper. Apply supported changes through MCP Pro
-IPC within a checkpoint/undo boundary. Save, re-read and validate; restore via IPC on failure and
-verify restoration. Acceptance: interrupted import preserves original design; accepted changes
-survive reopening. This is the outstanding transactional portion of M6.
+`scripts/kicad_promotion.py` now computes a geometry-aware copper delta and separate footprint
+movement report, rejects stale input and unsafe removals, and supplies checkpoint/restore hooks
+around IPC apply, save, re-read and validation. `scripts/kicad_topology.py` supplies the analogous
+atomic route adapter and `scripts/kicad_placement.py` supplies non-mutating hard-constraint
+placement failure. Acceptance still requires an interrupted real live-IPC promotion to be
+exercised and reopened; no automatic candidate import is enabled.
 
 ### R4 — Placement intent and ESP32 acceptance
 

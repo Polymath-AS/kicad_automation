@@ -92,6 +92,11 @@ checked-in MCP client instead of constructing HTTP requests by hand:
 .\tools\kicad-mcp.ps1 call pcb_get_board_summary --arguments '{}'
 ```
 
+`list` annotates the live response with stable backend/availability metadata. Use
+`.\tools\kicad-mcp.ps1 catalog` for the complete discoverable superset, including tools that are
+currently unavailable in a selected upstream operating mode. Discoverability does not grant write
+permission.
+
 `--arguments` also accepts `@path/to/arguments.json`, which avoids shell-quoting problems for
 larger payloads. Connection settings can be overridden with `KICAD_MCP_URL` and
 `KICAD_MCP_AUTH_TOKEN`.
@@ -167,6 +172,13 @@ The integration test records `liveSchematicContext`, `liveSchematicRead`, schema
 exposure, and the backend identified by the schematic read. Set
 `KICAD_TEST_SCHEMATIC_LIVE=1` only when testing a stack that is expected to provide a real live
 schematic document; the test fails if MCP reports a file-backed fallback.
+
+The pinned KiCad 10 pad-to-pad regression is opt-in because upstream exposes
+`route_from_pad_to_pad` only in experimental write mode. Run it against a disposable two-pad
+project with `KICAD_MCP_OPERATING_MODE=experimental` and `KICAD_TEST_PAD_TO_PAD=1`;
+`scripts/pad_to_pad_regression.py` resolves named pads, routes and saves them, reads the live board
+back, checks net assignment, and runs DRC. It reports pre-existing fixture warnings separately
+from unconnected-route failures.
 
 ## Validate
 

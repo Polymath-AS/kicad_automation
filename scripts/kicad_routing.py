@@ -18,6 +18,26 @@ import time
 import uuid
 from typing import Literal, NotRequired, TypedDict
 
+try:
+    from kicad_contracts import with_stable_uuid
+except ImportError:  # direct image/script execution
+    import sys
+    sys.path.insert(0, "/usr/local/lib/kicad-automation")
+    try:
+        from kicad_contracts import with_stable_uuid
+    except ImportError:  # repository-root test import
+        from scripts.kicad_contracts import with_stable_uuid
+
+try:
+    from kicad_topology import GridRouter, RouteRequest
+except ImportError:  # direct repository execution
+    import sys
+    sys.path.insert(0, "/usr/local/lib/kicad-automation")
+    try:
+        from kicad_topology import GridRouter, RouteRequest
+    except ImportError:  # repository-root test import
+        from scripts.kicad_topology import GridRouter, RouteRequest
+
 REVISION = "529f873d4c4c20493b1fa786cc9b42ce6cce2945"
 SCRIPTS = {"route": "route.py", "diff": "route_diff.py", "planes": "route_planes.py"}
 NUMBERS = {"track_width": (0.05, 10), "clearance": (0.05, 10),
@@ -139,9 +159,12 @@ def run_process(args: list[str], log: Path, timeout: int, cwd: Path) -> int:
 
 
 def findings(report: dict) -> list[dict]:
-    return [v for key in ("violations", "unconnected_items", "schematic_parity")
-            for v in report.get(key, [])] + [v for s in report.get("sheets", [])
-                                             for v in s.get("violations", [])]
+    result = []
+    for key in ("violations", "unconnected_items", "schematic_parity"):
+        result.extend(with_stable_uuid("violation", v) for v in report.get(key, []))
+    result.extend(with_stable_uuid("violation", v) for s in report.get("sheets", [])
+                  for v in s.get("violations", []))
+    return result
 
 
 def validate(board: Path, reports: Path) -> dict:
@@ -215,7 +238,18 @@ def doctor(root: Path) -> dict:
             raise ValueError(f"missing upstream script: {script}")
     return {"backend": "KiCadRoutingTools", "revision": actual,
             "operations": list(SCRIPTS), "source_access": "read_only",
-            "applies_to_live_board": False}
+            "applies_to_live_board": False,
+            "capabilities": {
+                "topology_preview": True,
+                "dry_run": True,
+                "blocking_object_reports": True,
+                "live_ipc_promotion": False,
+            }}
+
+
+def plan_trace(board: dict, request: dict) -> dict:
+    """Return a dry-run topology plan; no candidate/source file is changed."""
+    return GridRouter(board).plan(RouteRequest.from_mapping(request)).as_dict()
 
 
 def initialize_libraries() -> None:
@@ -319,6 +353,11 @@ def serve(workspace: Path, jobs: Path, root: Path) -> None:
         Source must be saved and unlocked. Output stays in /jobs; never applied to live IPC.
         """
         return run_job(plan, workspace, jobs, root)
+
+    @server.tool()
+    def routing_plan_trace(board: dict, request: dict) -> dict:
+        """Preview an obstacle-aware trace with blockers and no board mutation."""
+        return plan_trace(board, request)
 
     @server.tool()
     def routing_job_result(job_id: str) -> dict:

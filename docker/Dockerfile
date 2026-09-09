@@ -33,12 +33,26 @@ COPY docker/bin/run-kicad-integration-tests /usr/local/bin/run-kicad-integration
 COPY docker/bin/validate-kicad /usr/local/bin/validate-kicad
 COPY scripts/validate-kicad.sh /usr/local/lib/kicad-automation/validate-kicad.sh
 COPY scripts/summarize_kicad_report.py /usr/local/lib/kicad-automation/summarize-kicad-report.py
+COPY scripts/kicad_mcp_client.py /usr/local/lib/kicad-automation/kicad_mcp_client.py
+COPY scripts/kicad_contracts.py /usr/local/lib/kicad-automation/kicad_contracts.py
+COPY scripts/pad_to_pad_regression.py /usr/local/lib/kicad-automation/pad_to_pad_regression.py
+COPY scripts/kicad_topology.py /usr/local/lib/kicad-automation/kicad_topology.py
+COPY scripts/kicad_placement.py /usr/local/lib/kicad-automation/kicad_placement.py
+COPY scripts/kicad_schematic.py /usr/local/lib/kicad-automation/kicad_schematic.py
+COPY scripts/kicad_promotion.py /usr/local/lib/kicad-automation/kicad_promotion.py
 
 RUN sed -i 's/\r$//' \
       /usr/local/bin/kicad-runtime \
       /usr/local/bin/run-kicad-integration-tests /usr/local/bin/validate-kicad \
       /usr/local/lib/kicad-automation/validate-kicad.sh \
       /usr/local/lib/kicad-automation/summarize-kicad-report.py \
+      /usr/local/lib/kicad-automation/kicad_mcp_client.py \
+      /usr/local/lib/kicad-automation/kicad_contracts.py \
+      /usr/local/lib/kicad-automation/pad_to_pad_regression.py \
+      /usr/local/lib/kicad-automation/kicad_topology.py \
+      /usr/local/lib/kicad-automation/kicad_placement.py \
+      /usr/local/lib/kicad-automation/kicad_schematic.py \
+      /usr/local/lib/kicad-automation/kicad_promotion.py \
  && chmod 0755 /usr/local/bin/kicad-runtime \
       /usr/local/bin/run-kicad-integration-tests /usr/local/bin/validate-kicad \
       /usr/local/lib/kicad-automation/validate-kicad.sh \

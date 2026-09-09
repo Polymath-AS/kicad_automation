@@ -149,19 +149,22 @@ source and limitations.
 
 ## P2 — Workflow and API quality
 
-- **Implemented for the pinned routing layer resolver:** normalize layer inputs (`F.Cu`, `F_Cu`,
-  and `BL_F_Cu` IPC enum forms). Other upstream API boundaries still need contract coverage.
-- Include stable UUIDs in shape, track, pad, and violation inspection results so exact deletion
-  and exclusion are possible.
-- Replace `drc_add_exclusion`'s all-current-violations behavior with selective filters by UUID,
-  rule, type, reference, and a mandatory dry-run preview for bulk exclusions.
-- Support board-level minimum through-hole and NPTH constraints; distinguish footprint-internal
-  library exceptions from real board rule violations.
-- Make `sch_analyze_net_compilation` analyze the current schematic by default, or rename it to make
-  its request-only behavior explicit.
-- Expose ERC alongside schematic mutation tools instead of tying it to an unrelated profile.
-- Define new-project destination semantics so a requested project directory is not duplicated as
-  `<name>/<name>` unexpectedly; return all created paths.
+- **Implemented:** normalize layer inputs (`F.Cu`, `F_Cu`, and `BL_F_Cu` IPC enum forms) and
+  provide contract coverage for stable inspection UUIDs, typed mutation envelopes, and the
+  supported backend boundaries. Upstream tool-specific additions still require live coverage.
+- **Implemented in the repository adapter:** include stable UUIDs in shape, track, pad, and
+  violation inspection results so exact deletion and exclusion are possible.
+- **Implemented in the repository adapter:** selective DRC filters by UUID, rule, type, and
+  reference with mandatory dry-run preview for bulk exclusions; live upstream exclusion wiring
+  remains to be exercised.
+- **Implemented in the repository adapter:** board-level minimum through-hole and NPTH constraints
+  distinguish footprint-internal library exceptions from real board-rule violations.
+- **Implemented in the repository adapter:** `sch_analyze_net_compilation` defaults to the current
+  schematic when a current-document resolver is supplied.
+- **Implemented in the stable catalog:** ERC tools are discoverable alongside schematic mutation
+  tools rather than tied to a profile.
+- **Implemented in the repository adapter:** project destination resolution returns all created
+  paths without implicit nested duplication.
 - **Implemented:** avoid Windows execution-policy friction with scoped `.cmd` launchers. Docker
   permission failures are classified and preserved, while host privilege policy remains external.
 
@@ -170,21 +173,24 @@ source and limitations.
 - [x] **M1:** Check in this evidence-based backlog.
 - [x] **M2:** Add and test the repository MCP client; replace new ad-hoc HTTP usage in docs/scripts.
 - [x] **M3:** Persist validation artifacts under the mounted workspace and test the path contract.
-- [ ] **M4:** Add an integration regression for KiCad 10 pad-to-pad routing and fix upstream or carry
+- [x] **M4:** Add an integration regression for KiCad 10 pad-to-pad routing and fix upstream or carry
   a narrowly versioned compatibility patch.
 - [x] **M5:** Deliver the stable catalog/backend metadata and eliminate profile switching for the
   end-to-end board workflow.
 - [ ] **M6:** Add transactional topology-aware routing and constraint-aware placement.
   **Partially implemented:** pinned KiCadRoutingTools candidate backend, typed CLI/MCP plans,
   isolated source copies, per-stage ERC/DRC, original-rule restoration and regression detection.
-  Live IPC promotion/rollback and constraint-aware placement remain open. See
+  Repository-level transactional routing, dry-run blockers, rollback and constrained placement
+  contracts are now implemented and unit-tested; live IPC promotion/reopen coverage remains open.
+  See
   [R1-R6 and detailed execution steps](docs/KICAD_ROUTING_TOOLS.md).
 
 Items requiring changes inside `kicad-mcp-pro` should be fixed upstream where possible. Any local
 compatibility patch must be pinned to the affected upstream version, covered by a failing-then-
 passing integration test, and removed when the pinned dependency contains the fix.
 
-M4 is in progress: the version-pinned KiCad 10 pad lookup patch and a build-time regression are in
-place. A non-destructive live lookup reached the tool but was blocked because upstream marks
-`route_from_pad_to_pad` as experimental while the service runs in write mode. The milestone remains
-open until a disposable two-pad fixture proves route creation, save, and DRC end to end.
+M4 is complete for the pinned runtime: the version-pinned KiCad 10 pad lookup patch, build-time
+regression, and `scripts/pad_to_pad_regression.py` are in place. In an isolated experimental-mode
+KiCad 10.0.4 service, J1.1-to-J2.1 was resolved and routed on SIGNAL, saved, read back as live
+tracks, and checked by DRC with zero unconnected items. The fixture's two pre-existing
+`footprint_symbol_mismatch` warnings remain documented; they are not hidden by the regression.

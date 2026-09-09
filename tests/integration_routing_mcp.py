@@ -16,7 +16,7 @@ async def main():
             await session.initialize()
             catalog = await session.list_tools()
             tools = {tool.name: tool for tool in catalog.tools}
-            assert set(tools) == {'routing_tools_info', 'routing_run_candidate', 'routing_job_result'}
+            assert set(tools) == {'routing_tools_info', 'routing_run_candidate', 'routing_plan_trace', 'routing_job_result'}
             schema = tools['routing_run_candidate'].inputSchema
             assert 'RoutingStep' in json.dumps(schema), schema
             invalid = await session.call_tool('routing_run_candidate', {'plan': {
