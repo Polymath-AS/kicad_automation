@@ -71,6 +71,25 @@ applying the version-pinned patch.
 
 ## Partially shipped
 
+### KiCadRoutingTools candidate backend (M6)
+
+- Optional `compose.routing.yaml` builds upstream revision
+  `529f873d4c4c20493b1fa786cc9b42ce6cce2945`, including the Rust engine from source.
+- `tools/kicad-routing.cmd` / `.ps1` support build, doctor, run and stdio MCP.
+- `routing_tools_info`, `routing_run_candidate` and `routing_job_result` provide typed plans
+  and persisted results without changing the main MCP Pro profile.
+- Source is read-only; staged inputs protect the baseline from upstream input-side edits.
+  Original project, schematic and custom-rule files are restored before each independent check.
+- Baseline and each routing stage get ERC and DRC with schematic parity. Finding comparison
+  rejects new nonconnectivity findings and increased unconnected counts. Hash checks detect
+  changed source boards, schematics, projects and custom rules.
+- Jobs preserve normalized plans, commands, logs, hashes, full findings and candidate projects.
+  No automatic source overwrite or live-board import is implemented.
+
+Detailed implementation, commands and the sequenced remaining plan are in
+[`KICAD_ROUTING_TOOLS.md`](KICAD_ROUTING_TOOLS.md). Generic routing has real copper-creation
+coverage; differential and plane dispatch are implemented but electrical fixtures remain open.
+
 ### KiCad 10 pad lookup for pad-to-pad routing
 
 - The image applies `docker/patches/kicad-mcp-pro-3.34.0-kicad10-pad-lookup.patch` only to the
@@ -93,11 +112,17 @@ normal write-mode service cannot run that integration safely yet.
 - Consistent partial-success operation envelopes.
 - KiCad 10 ratsnest fallback.
 - Selective DRC exclusions, stable inspection UUIDs, and project path semantics.
-- Transactional, obstacle-aware routing and rollback.
+- Reviewed live IPC promotion/rollback of obstacle-aware routing candidates.
 
 ## Current verification baseline
 
-- Python unit/contract suite: 22 tests passing for the current compatibility baseline.
+- Python unit/contract suite: 30 tests passing, including eight candidate-routing tests.
 - Container build: `local/kicad-automation:10.0.4-mcp-pro` builds with the compatibility test.
 - Fixture validation: ERC clean, DRC clean, detailed reports persisted under
   `.kicad-automation/reports/`.
+
+Routing integration: real stdio MCP and Rust generic routing passed on `krt-smoke`; unconnected
+count 1 -> 0, ERC 0, DRC two unchanged footprint-symbol warnings. Candidate remains
+`needs_review`; no automatic apply. Fixture source unchanged. See the routing guide for the
+exact command and remaining electrical coverage. The original minimal fixture's clean result
+above is distinct from this intentionally unrouted fixture.

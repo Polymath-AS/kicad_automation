@@ -1,0 +1,7 @@
+{
+  "project": "tests/fixtures/kicad-project/minimal.kicad_pcb",
+  "timeout_seconds": 120,
+  "steps": [
+    {"operation": "route", "nets": ["*"], "layers": ["F.Cu", "B.Cu"]}
+  ]
+}

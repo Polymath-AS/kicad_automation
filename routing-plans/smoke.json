@@ -1,0 +1,7 @@
+{
+  "project": "tests/fixtures/krt-smoke/krt-smoke.kicad_pcb",
+  "timeout_seconds": 120,
+  "steps": [
+    {"operation": "route", "nets": ["SIGNAL"], "layers": ["F.Cu", "B.Cu"]}
+  ]
+}

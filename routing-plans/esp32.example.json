@@ -1,0 +1,9 @@
+{
+  "project": "esp32_devboard/esp32_devboard/esp32_devboard.kicad_pcb",
+  "timeout_seconds": 600,
+  "steps": [
+    {"operation": "planes", "nets": ["GND"], "layers": ["B.Cu"]},
+    {"operation": "diff", "nets": ["USB_D+", "USB_D-"], "layers": ["F.Cu"]},
+    {"operation": "route", "nets": ["*", "!USB_D+", "!USB_D-"], "layers": ["F.Cu", "B.Cu"]}
+  ]
+}

@@ -1,0 +1,32 @@
+name: kicad-routing-automation
+services:
+  routing:
+    build:
+      context: .
+      dockerfile: docker/routing.Dockerfile
+    image: local/kicad-routing-tools:0.22.0-529f873
+    working_dir: /jobs
+    volumes:
+      - type: bind
+        source: ${KICAD_PROJECT_DIR:-.}
+        target: /workspace
+        read_only: true
+      - type: bind
+        source: ${KICAD_ROUTING_JOBS_DIR:-./.kicad-automation/routing}
+        target: /jobs
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m
+    environment:
+      HOME: /tmp
+      TMPDIR: /tmp
+      XDG_CACHE_HOME: /tmp/cache
+      XDG_CONFIG_HOME: /tmp/config
+      PYTHONDONTWRITEBYTECODE: "1"
+    mem_limit: 4g
+    cpus: 2
+    pids_limit: 256
+    init: true
+    stdin_open: true
+    tty: false

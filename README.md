@@ -183,6 +183,23 @@ captured `kicad-cli` log, and an overall status. `clean` is used only when both 
 ran and produced no violations. Missing project files, validator execution errors, and reported
 ERC/DRC violations return distinct nonzero outcomes.
 
+## Optional KiCadRoutingTools routing
+
+The separate routing image exposes `route`, `diff`, and `planes` as validated candidate jobs
+through CLI and MCP. It reads the source project through a read-only mount, preserves the
+original rules for ERC/DRC, and never automatically overwrites the live board.
+
+```powershell
+.\tools\kicad-routing.cmd build
+.\tools\kicad-routing.cmd doctor
+.\tools\kicad-routing.cmd run routing-plans/smoke.json
+```
+
+The smoke fixture is expected to return `needs_review`: routing resolves its missing connection,
+but two pre-existing footprint identifier warnings remain. Non-clean candidates return exit 1.
+See [the detailed integration guide and remaining milestones](docs/KICAD_ROUTING_TOOLS.md)
+for installation, MCP configuration, plans, evidence, review, limitations and tests.
+
 ## Test
 
 ```powershell

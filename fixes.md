@@ -131,6 +131,12 @@ never combine contradictory transport and domain status.
 **Acceptance:** Clients can decide retry/rollback behavior from structured fields without parsing
 message text.
 
+Additional routing-fixture evidence: `pcb_sync_from_schematic` can refuse a write while returning
+`isError: false`; the fixture helper checks that refusal explicitly. Synchronization also left
+two footprint IDs without their library prefix, producing `footprint_symbol_mismatch` warnings.
+Preserve qualified footprint IDs during transfer and add a parity regression fixture. Neither
+defect is fixed by the candidate router; its validator preserves and reports these warnings.
+
 ### Provide supported KiCad 10 ratsnest fallback
 
 **Observed:** `pcb_get_ratsnest` reports that the live ratsnest API is unavailable in KiCad 10 even
@@ -169,6 +175,10 @@ source and limitations.
 - [x] **M5:** Deliver the stable catalog/backend metadata and eliminate profile switching for the
   end-to-end board workflow.
 - [ ] **M6:** Add transactional topology-aware routing and constraint-aware placement.
+  **Partially implemented:** pinned KiCadRoutingTools candidate backend, typed CLI/MCP plans,
+  isolated source copies, per-stage ERC/DRC, original-rule restoration and regression detection.
+  Live IPC promotion/rollback and constraint-aware placement remain open. See
+  [R1-R6 and detailed execution steps](docs/KICAD_ROUTING_TOOLS.md).
 
 Items requiring changes inside `kicad-mcp-pro` should be fixed upstream where possible. Any local
 compatibility patch must be pinned to the affected upstream version, covered by a failing-then-

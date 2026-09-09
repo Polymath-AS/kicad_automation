@@ -1,0 +1,9 @@
+# Optional addition to .codex/config.toml after tools/kicad-routing.cmd build.
+# Launch from repository root. Separate candidate-only MCP service.
+[mcp_servers.kicad_routing]
+command = "powershell.exe"
+args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/kicad-routing.ps1", "mcp"]
+required = false
+startup_timeout_sec = 60
+tool_timeout_sec = 3600
+enabled_tools = ["routing_tools_info", "routing_run_candidate", "routing_job_result"]
