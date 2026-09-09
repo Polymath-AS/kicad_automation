@@ -1,0 +1,6 @@
+diff --git a/kicad_mcp/utils/layers.py b/kicad_mcp/utils/layers.py
+--- a/kicad_mcp/utils/layers.py
++++ b/kicad_mcp/utils/layers.py
+@@ -65,0 +66,2 @@
++    # KiCad IPC result objects commonly expose protobuf enum names.
++    **{f"BL_{name}": name for name in CANONICAL_LAYER_NAMES},

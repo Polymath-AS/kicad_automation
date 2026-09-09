@@ -59,6 +59,16 @@ forwarding for both launchers.
 Verification: the full Docker integration passed against the minimal fixture with both live PCB
 and file-backed schematic tools in one server session, followed by clean ERC and DRC.
 
+### Layer-name normalization
+
+- The pinned MCP compatibility layer accepts KiCad display names (`F.Cu`), canonical tool names
+  (`F_Cu`), and protobuf/IPC enum names (`BL_F_Cu`) at routing layer boundaries.
+- The same normalization covers the supported copper, silkscreen, mask, fabrication, courtyard,
+  edge, drawing, comments, and user layers.
+
+Verification: the image build checks representative dotted, canonical, and IPC enum aliases after
+applying the version-pinned patch.
+
 ## Partially shipped
 
 ### KiCad 10 pad lookup for pad-to-pad routing
@@ -82,13 +92,12 @@ normal write-mode service cannot run that integration safely yet.
 - Constraint-aware auto-placement.
 - Consistent partial-success operation envelopes.
 - KiCad 10 ratsnest fallback.
-- Selective DRC exclusions, stable inspection UUIDs, layer-name normalization, and project path
-  semantics.
+- Selective DRC exclusions, stable inspection UUIDs, and project path semantics.
 - Transactional, obstacle-aware routing and rollback.
 
 ## Current verification baseline
 
-- Python unit/contract suite: 21 tests passing for the validation-summary and launcher baseline.
+- Python unit/contract suite: 22 tests passing for the current compatibility baseline.
 - Container build: `local/kicad-automation:10.0.4-mcp-pro` builds with the compatibility test.
 - Fixture validation: ERC clean, DRC clean, detailed reports persisted under
   `.kicad-automation/reports/`.

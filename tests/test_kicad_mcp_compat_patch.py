@@ -17,6 +17,14 @@ class KicadMcpCompatibilityPatchTests(unittest.TestCase):
         self.assertIn("board_footprints", patch)
         self.assertNotIn("pad.parent.reference_field", patch.split("+    #", 1)[-1])
 
+    def test_layer_alias_patch_accepts_ipc_enum_names(self):
+        dockerfile = (ROOT / "docker" / "Dockerfile").read_text(encoding="utf-8")
+        patch = (
+            ROOT / "docker" / "patches" / "kicad-mcp-pro-3.34.0-layer-aliases.patch"
+        ).read_text(encoding="utf-8")
+        self.assertIn("kicad-mcp-pro-3.34.0-layer-aliases.patch", dockerfile)
+        self.assertIn('f"BL_{name}"', patch)
+
 
 if __name__ == "__main__":
     unittest.main()

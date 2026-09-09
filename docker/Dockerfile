@@ -15,13 +15,18 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 COPY docker/patches/kicad-mcp-pro-3.34.0-kicad10-pad-lookup.patch /tmp/kicad-mcp-pro.patch
+COPY docker/patches/kicad-mcp-pro-3.34.0-layer-aliases.patch /tmp/kicad-mcp-pro-layers.patch
 COPY docker/tests/verify_kicad_mcp_compat.py /tmp/verify-kicad-mcp-compat.py
 
 RUN patch --batch --fuzz=0 -p1 \
       -d /opt/kicad-mcp-pro/lib/python3.13/site-packages \
       </tmp/kicad-mcp-pro.patch \
+ && patch --batch --fuzz=0 -p1 \
+      -d /opt/kicad-mcp-pro/lib/python3.13/site-packages \
+      </tmp/kicad-mcp-pro-layers.patch \
  && /opt/kicad-mcp-pro/bin/python /tmp/verify-kicad-mcp-compat.py \
- && rm -f /tmp/kicad-mcp-pro.patch /tmp/verify-kicad-mcp-compat.py
+ && rm -f /tmp/kicad-mcp-pro.patch /tmp/kicad-mcp-pro-layers.patch \
+      /tmp/verify-kicad-mcp-compat.py
 
 COPY docker/bin/kicad-runtime /usr/local/bin/kicad-runtime
 COPY docker/bin/run-kicad-integration-tests /usr/local/bin/run-kicad-integration-tests

@@ -143,7 +143,8 @@ source and limitations.
 
 ## P2 — Workflow and API quality
 
-- Normalize layer inputs (`F.Cu`, `F_Cu`, and IPC enum forms) at every API boundary.
+- **Implemented for the pinned routing layer resolver:** normalize layer inputs (`F.Cu`, `F_Cu`,
+  and `BL_F_Cu` IPC enum forms). Other upstream API boundaries still need contract coverage.
 - Include stable UUIDs in shape, track, pad, and violation inspection results so exact deletion
   and exclusion are possible.
 - Replace `drc_add_exclusion`'s all-current-violations behavior with selective filters by UUID,
