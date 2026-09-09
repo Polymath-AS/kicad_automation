@@ -142,9 +142,11 @@ workflow, including:
 `pcb_get_footprints`, `pcb_get_nets`, `pcb_get_tracks`, `pcb_get_shapes`,
 `pcb_move_component`, `pcb_move_footprint`, `pcb_route_trace`, and `pcb_save`.
 
-The default profile is `pcb_only` with `KICAD_MCP_OPERATING_MODE=write`. Set
-`KICAD_MCP_PROFILE=pcb_layout`, `manufacturing`, or another upstream MCP Pro profile in `.env`
-when that profile's additional tools are required.
+The default profile is `builder` with `KICAD_MCP_OPERATING_MODE=write` and file-backed schematic
+support. It exposes the stable project-building surface needed to create and inspect schematics,
+synchronize and edit a live PCB, route, save, and run ERC/DRC without restarting the service.
+Use `manufacturing` or another specialized upstream profile only for workflows outside that
+design surface.
 
 Schematic support is split deliberately:
 
@@ -152,9 +154,8 @@ Schematic support is split deliberately:
   documentation describes KiCad 9/10 IPC as GUI-only and PCB-oriented; the installed `kipy`
   schematic class is marked KiCad 11-only and is incompatible with the bundled KiCad 10
   protobufs. The runtime therefore does not start Eeschema as a false readiness signal.
-- `KICAD_MCP_PROFILE=schematic_only` (or another upstream schematic profile) exposes MCP Pro's
-  supported file-backed schematic tools. Set `KICAD_MCP_SCHEMATIC_MODE=file_backed` to make that
-  intent explicit. Their responses identify `Source: file-backed`.
+- The default `builder` profile exposes MCP Pro's supported file-backed schematic tools with
+  `KICAD_MCP_SCHEMATIC_MODE=file_backed`. Their responses identify `Source: file-backed`.
 - `KICAD_MCP_SCHEMATIC_MODE=live` fails early with the exact unsupported-stack diagnosis. It is
   reserved for a future verified KiCad 11+ IPC configuration; it does not silently fall back to
   file editing.
@@ -199,4 +200,13 @@ PowerShell convenience wrapper:
 .\tools\kicad-docker.ps1 build
 .\tools\kicad-docker.ps1 test
 .\tools\kicad-docker.ps1 validate tests/fixtures/kicad-project/minimal --erc --drc
+```
+
+On Windows hosts that enforce a restrictive PowerShell execution policy, use the checked-in
+launchers instead of changing machine or user policy:
+
+```bat
+tools\kicad-docker.cmd start
+tools\kicad-docker.cmd validate tests/fixtures/kicad-project/minimal --erc --drc
+tools\kicad-mcp.cmd call pcb_get_board_summary
 ```

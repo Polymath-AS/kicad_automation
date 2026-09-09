@@ -5,6 +5,9 @@ Dockerized KiCad 10 MCP runtime. The priority is to make the supported path dete
 agent-friendly: one discoverable tool surface, structured results, persistent diagnostics, and
 no need for ad-hoc host-side KiCad or HTTP calls.
 
+Implemented work and verification evidence are tracked in
+[`docs/IMPLEMENTED_FIXES.md`](docs/IMPLEMENTED_FIXES.md).
+
 ## P0 — Blocks reliable board generation
 
 ### Provide one stable, complete MCP tool surface
@@ -152,8 +155,8 @@ source and limitations.
 - Expose ERC alongside schematic mutation tools instead of tying it to an unrelated profile.
 - Define new-project destination semantics so a requested project directory is not duplicated as
   `<name>/<name>` unexpectedly; return all created paths.
-- Avoid Windows execution-policy friction with a documented signed entry point or a small `.cmd`
-  launcher, and keep Docker permission failures classified once rather than prompting repeatedly.
+- **Implemented:** avoid Windows execution-policy friction with scoped `.cmd` launchers. Docker
+  permission failures are classified and preserved, while host privilege policy remains external.
 
 ## Implementation milestones
 
@@ -162,7 +165,7 @@ source and limitations.
 - [x] **M3:** Persist validation artifacts under the mounted workspace and test the path contract.
 - [ ] **M4:** Add an integration regression for KiCad 10 pad-to-pad routing and fix upstream or carry
   a narrowly versioned compatibility patch.
-- [ ] **M5:** Deliver the stable catalog/backend metadata and eliminate profile switching for the
+- [x] **M5:** Deliver the stable catalog/backend metadata and eliminate profile switching for the
   end-to-end board workflow.
 - [ ] **M6:** Add transactional topology-aware routing and constraint-aware placement.
 

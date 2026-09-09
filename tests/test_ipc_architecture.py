@@ -40,6 +40,13 @@ class ArchitectureTests(unittest.TestCase):
     def test_compose_exposes_mcp_on_loopback_only(self):
         compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
         self.assertIn("127.0.0.1:${KICAD_MCP_PORT:-3334}:3334", compose)
+        self.assertEqual(compose.count("KICAD_MCP_PROFILE: ${KICAD_MCP_PROFILE:-builder}"), 2)
+        self.assertEqual(
+            compose.count(
+                "KICAD_MCP_SCHEMATIC_MODE: ${KICAD_MCP_SCHEMATIC_MODE:-file_backed}"
+            ),
+            2,
+        )
         self.assertNotIn("network_mode: none", compose)
 
     def test_codex_mcp_config_is_clone_safe_and_focused(self):
@@ -55,6 +62,20 @@ class ArchitectureTests(unittest.TestCase):
         self.assertIn("required = false", config)
         self.assertIn("startup_timeout_sec = 60", config)
         self.assertIn('"pcb_get_board_summary"', config)
+        self.assertIn('"sch_build_circuit"', config)
+        self.assertIn('"pcb_sync_from_schematic"', config)
+        self.assertIn('"run_erc"', config)
+        self.assertIn('"run_drc"', config)
+
+    def test_windows_launchers_scope_execution_policy_bypass(self):
+        for name, script in (
+            ("kicad-docker.cmd", "kicad-docker.ps1"),
+            ("kicad-mcp.cmd", "kicad-mcp.ps1"),
+        ):
+            launcher = (ROOT / "tools" / name).read_text(encoding="utf-8")
+            self.assertIn("-NoProfile -ExecutionPolicy Bypass -File", launcher)
+            self.assertIn(script, launcher)
+            self.assertIn("%*", launcher)
 
 
 if __name__ == "__main__":

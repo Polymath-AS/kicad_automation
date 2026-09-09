@@ -78,6 +78,23 @@ done
 mcp_call 2 "tools/list" '{}' /runtime/test-mcp-tools.json
 has_tool kicad_get_server_info || { printf 'MCP tool list missing kicad_get_server_info\n' >&2; exit 2; }
 
+if [[ "${KICAD_MCP_PROFILE:-builder}" == builder ]]; then
+  required_workflow_tools=(
+    kicad_create_new_project
+    sch_build_circuit sch_add_no_connect sch_get_symbols
+    pcb_sync_from_schematic pcb_get_board_summary pcb_get_pads
+    pcb_set_board_outline pcb_set_design_rules pcb_delete_items pcb_save
+    pcb_route_trace
+    run_erc run_drc get_unconnected_nets
+  )
+  for required_tool in "${required_workflow_tools[@]}"; do
+    has_tool "$required_tool" || {
+      printf 'Builder profile missing required workflow tool: %s\n' "$required_tool" >&2
+      exit 2
+    }
+  done
+fi
+
 mcp_call 3 "tools/call" '{"name":"kicad_get_server_info","arguments":{}}' /runtime/test-mcp-server-info.json
 mcp_call 4 "tools/call" '{"name":"kicad_get_project_info","arguments":{}}' /runtime/test-mcp-project-info.json
 
@@ -117,7 +134,7 @@ if has_tool sch_get_symbols; then
     printf 'Live schematic context was reported, but sch_get_symbols used file-backed parsing; refusing to claim live schematic IPC\n' >&2
     exit 2
   fi
-elif [[ "${KICAD_MCP_PROFILE:-pcb_only}" == schematic* ]]; then
+elif [[ "${KICAD_MCP_PROFILE:-builder}" == schematic* ]]; then
   printf 'Schematic profile did not expose sch_get_symbols; see /runtime/test-mcp-tools.json\n' >&2
   exit 2
 fi
