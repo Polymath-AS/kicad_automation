@@ -159,7 +159,7 @@ source and limitations.
 
 - [x] **M1:** Check in this evidence-based backlog.
 - [x] **M2:** Add and test the repository MCP client; replace new ad-hoc HTTP usage in docs/scripts.
-- [ ] **M3:** Persist validation artifacts under the mounted workspace and test the path contract.
+- [x] **M3:** Persist validation artifacts under the mounted workspace and test the path contract.
 - [ ] **M4:** Add an integration regression for KiCad 10 pad-to-pad routing and fix upstream or carry
   a narrowly versioned compatibility patch.
 - [ ] **M5:** Deliver the stable catalog/backend metadata and eliminate profile switching for the

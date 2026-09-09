@@ -6,7 +6,9 @@ json_string() {
 }
 
 project=
-out=/runtime/reports
+# /workspace is the host bind mount. Keep reports after the one-shot validation
+# container exits unless the caller explicitly selects another destination.
+out=${KICAD_VALIDATION_REPORT_DIR:-/workspace/.kicad-automation/reports}
 do_erc=0
 do_drc=0
 do_gerbers=0
@@ -71,6 +73,10 @@ base=$(basename "$stem")
 cli_log="$out/$base-kicad-cli.log"
 erc_json="$out/$base-erc.json"
 drc_json="$out/$base-drc.json"
+workspace_relative_report_dir=
+case "$out" in
+  /workspace/*) workspace_relative_report_dir=${out#/workspace/} ;;
+esac
 : >"$cli_log"
 
 cli_version=
@@ -246,8 +252,9 @@ jq -cn \
   --arg kicad_version "$cli_version" \
   --arg log "$cli_log" \
   --arg report_dir "$out" \
+  --arg workspace_relative_report_dir "$workspace_relative_report_dir" \
   --arg status "$overall_status" \
   --argjson results "$results_json" \
-  '{status:$status,project:$project,kicad_version:$kicad_version,report_dir:$report_dir,log:$log,results:$results}'
+  '{status:$status,project:$project,kicad_version:$kicad_version,report_dir:$report_dir,workspace_relative_report_dir:(if $workspace_relative_report_dir == "" then null else $workspace_relative_report_dir end),log:$log,results:$results}'
 
 exit "$overall_code"
