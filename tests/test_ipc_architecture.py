@@ -42,12 +42,17 @@ class ArchitectureTests(unittest.TestCase):
         self.assertIn("127.0.0.1:${KICAD_MCP_PORT:-3334}:3334", compose)
         self.assertNotIn("network_mode: none", compose)
 
-    def test_codex_mcp_config_requires_ready_focused_server(self):
+    def test_codex_mcp_config_is_clone_safe_and_focused(self):
         config = (ROOT / ".codex" / "config.toml").read_text(encoding="utf-8")
         self.assertIn('[mcp_servers.kicad]', config)
         self.assertIn('url = "http://127.0.0.1:3334/mcp"', config)
-        self.assertIn('bearer_token_env_var = "KICAD_MCP_AUTH_TOKEN"', config)
-        self.assertIn("required = true", config)
+        self.assertIn(
+            'http_headers = { Authorization = "Bearer '
+            'kicad-automation-local-dev-token-change-me-2026" }',
+            config,
+        )
+        self.assertNotIn("bearer_token_env_var", config)
+        self.assertIn("required = false", config)
         self.assertIn("startup_timeout_sec = 60", config)
         self.assertIn('"pcb_get_board_summary"', config)
 

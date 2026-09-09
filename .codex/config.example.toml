@@ -1,9 +1,9 @@
-mcp_optional_startup_grace_ms = 0
+mcp_optional_startup_grace_ms = 1000
 
 [mcp_servers.kicad]
 url = "http://127.0.0.1:3334/mcp"
-bearer_token_env_var = "KICAD_MCP_AUTH_TOKEN"
-required = true
+http_headers = { Authorization = "Bearer kicad-automation-local-dev-token-change-me-2026" }
+required = false
 startup_timeout_sec = 60
 tool_timeout_sec = 120
 default_tools_approval_mode = "writes"

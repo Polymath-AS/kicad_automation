@@ -110,6 +110,13 @@ class McpClientTests(unittest.TestCase):
         with self.assertRaisesRegex(mcp.McpClientError, "invalid JSON"):
             mcp.parse_json_argument("not-json")
 
+    def test_powershell_entrypoints_use_supported_client(self):
+        direct_wrapper = (ROOT / "tools" / "kicad-mcp.ps1").read_text(encoding="utf-8")
+        docker_wrapper = (ROOT / "tools" / "kicad-docker.ps1").read_text(encoding="utf-8")
+        self.assertIn("kicad_mcp_client.py", direct_wrapper)
+        self.assertIn("kicad_mcp_client.py", docker_wrapper)
+        self.assertNotIn("Invoke-WebRequest", docker_wrapper)
+
 
 if __name__ == "__main__":
     unittest.main()

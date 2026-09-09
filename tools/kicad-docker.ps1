@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position=0)]
-    [ValidateSet('build','up','test','validate','shell','logs','down')]
+    [ValidateSet('build','up','start','test','validate','shell','logs','down')]
     [string]$Command = 'test',
     [Parameter(Position=1)]
     [string]$Target,
@@ -84,7 +84,7 @@ $env:KICAD_PROJECT_DIR = $resolvedProject
 $env:KICAD_ENTRYPOINT_PROJECT = $defaultTarget
 $env:KICAD_TEST_PROJECT = $defaultTarget
 
-if ($Command -in @('up', 'test', 'validate')) {
+if ($Command -in @('up', 'start', 'test', 'validate')) {
     if ($Command -eq 'validate' -and -not $Target) { throw 'validate requires a project path or stem' }
     $requestedTarget = if ($Target) { $Target } else { $defaultTarget }
     $resolvedTarget = Resolve-KiCadTarget $resolvedProject $requestedTarget
@@ -150,9 +150,23 @@ function Invoke-Compose([string[]]$ComposeArgs) {
     }
 }
 
+function Wait-KiCadMcp([int]$TimeoutSeconds = 120) {
+    $client = Join-Path $repoRoot 'scripts\kicad_mcp_client.py'
+    & python $client --timeout 5 wait --wait-timeout $TimeoutSeconds | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "KiCad MCP did not become ready within $TimeoutSeconds seconds. Run '.\tools\kicad-docker.ps1 logs' for details."
+    }
+}
+
 switch ($Command) {
     'build'    { Invoke-Compose @('build','--pull','kicad') }
     'up'       { Invoke-Compose @('up','kicad') }
+    'start'    {
+        Invoke-Compose @('up','-d','kicad')
+        Wait-KiCadMcp
+        & codex @ExtraArgs
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
     'test'     { Invoke-Compose @('run','--rm','-T','test') }
     'validate' { Invoke-Compose (@('run','--rm','-T','kicad','validate','--project',"/workspace/$($resolvedTarget.ContainerStem)") + $ExtraArgs) }
     'shell'    { Invoke-Compose @('run','--rm','kicad','shell') }

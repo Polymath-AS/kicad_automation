@@ -14,6 +14,21 @@ kicad-cli
 
 The old KiCad 9 worker, repo-owned MCP server, SWIG `pcbnew` editor, wrapper aliases, and duplicate validation paths have been removed. The active architecture is KiCad MCP Pro plus the bundled tools from `ghcr.io/inti-cmnb/kicad10_auto:1.9.0`.
 
+## Quick Start
+
+After cloning, start the KiCad container and Codex together:
+
+```powershell
+.\tools\kicad-docker.ps1 start
+```
+
+The first run builds the Docker image, waits for the MCP endpoint, and then opens Codex. No token
+setup is required. Docker Desktop must be installed and running.
+
+Running plain `codex` is also safe: the KiCad MCP server is optional during Codex startup, so an
+unavailable container no longer prevents the session from opening. Start the container and open a
+new Codex session when you need KiCad tools.
+
 ## Build
 
 ```powershell
@@ -62,23 +77,32 @@ MCP Pro is published only to host loopback:
 http://127.0.0.1:3334/mcp
 ```
 
-Codex reads the project-scoped `.codex/config.toml` only for a trusted project. The local
-development bearer token must also be present in the host environment before Codex starts:
+Codex reads the project-scoped `.codex/config.toml` only for a trusted project. Its static
+Authorization header matches the non-secret development token used by Compose. The service is
+published only on host loopback, and a missing service does not prevent Codex from starting.
+Verify the connection with `codex mcp list` and the `/mcp` command in the Codex interface.
+
+For automation, diagnostics, and tools that are not visible in a client's cached catalog, use the
+checked-in MCP client instead of constructing HTTP requests by hand:
 
 ```powershell
-$env:KICAD_MCP_AUTH_TOKEN = "kicad-automation-local-dev-token-change-me-2026"
+.\tools\kicad-mcp.ps1 wait
+.\tools\kicad-mcp.ps1 list
+.\tools\kicad-mcp.ps1 schema pcb_get_board_summary
+.\tools\kicad-mcp.ps1 call pcb_get_board_summary --arguments '{}'
 ```
 
-Restart Codex after configuring the server or changing this environment variable. Verify the
-connection with `codex mcp list` and the `/mcp` command in the Codex interface.
+`--arguments` also accepts `@path/to/arguments.json`, which avoids shell-quoting problems for
+larger payloads. Connection settings can be overridden with `KICAD_MCP_URL` and
+`KICAD_MCP_AUTH_TOKEN`.
 
 Codex project config example:
 
 ```toml
 [mcp_servers.kicad]
 url = "http://127.0.0.1:3334/mcp"
-bearer_token_env_var = "KICAD_MCP_AUTH_TOKEN"
-required = true
+http_headers = { Authorization = "Bearer kicad-automation-local-dev-token-change-me-2026" }
+required = false
 startup_timeout_sec = 60
 tool_timeout_sec = 120
 default_tools_approval_mode = "writes"
