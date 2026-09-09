@@ -169,3 +169,8 @@ source and limitations.
 Items requiring changes inside `kicad-mcp-pro` should be fixed upstream where possible. Any local
 compatibility patch must be pinned to the affected upstream version, covered by a failing-then-
 passing integration test, and removed when the pinned dependency contains the fix.
+
+M4 is in progress: the version-pinned KiCad 10 pad lookup patch and a build-time regression are in
+place. A non-destructive live lookup reached the tool but was blocked because upstream marks
+`route_from_pad_to_pad` as experimental while the service runs in write mode. The milestone remains
+open until a disposable two-pad fixture proves route creation, save, and DRC end to end.

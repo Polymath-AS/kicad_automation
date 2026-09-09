@@ -14,12 +14,25 @@ RUN apt-get update \
  && ln -sf /opt/kicad-mcp-pro/bin/kicad-mcp-pro /usr/local/bin/kicad-mcp-pro \
  && rm -rf /var/lib/apt/lists/*
 
+COPY docker/patches/kicad-mcp-pro-3.34.0-kicad10-pad-lookup.patch /tmp/kicad-mcp-pro.patch
+COPY docker/tests/verify_kicad_mcp_compat.py /tmp/verify-kicad-mcp-compat.py
+
+RUN patch --batch --fuzz=0 -p1 \
+      -d /opt/kicad-mcp-pro/lib/python3.13/site-packages \
+      </tmp/kicad-mcp-pro.patch \
+ && /opt/kicad-mcp-pro/bin/python /tmp/verify-kicad-mcp-compat.py \
+ && rm -f /tmp/kicad-mcp-pro.patch /tmp/verify-kicad-mcp-compat.py
+
 COPY docker/bin/kicad-runtime /usr/local/bin/kicad-runtime
 COPY docker/bin/run-kicad-integration-tests /usr/local/bin/run-kicad-integration-tests
 COPY docker/bin/validate-kicad /usr/local/bin/validate-kicad
 COPY scripts/validate-kicad.sh /usr/local/lib/kicad-automation/validate-kicad.sh
 
-RUN chmod 0755 /usr/local/bin/kicad-runtime \
+RUN sed -i 's/\r$//' \
+      /usr/local/bin/kicad-runtime \
+      /usr/local/bin/run-kicad-integration-tests /usr/local/bin/validate-kicad \
+      /usr/local/lib/kicad-automation/validate-kicad.sh \
+ && chmod 0755 /usr/local/bin/kicad-runtime \
       /usr/local/bin/run-kicad-integration-tests /usr/local/bin/validate-kicad \
       /usr/local/lib/kicad-automation/validate-kicad.sh \
  && ln -sf /usr/bin/fdfind /usr/local/bin/fd

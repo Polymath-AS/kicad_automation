@@ -1,0 +1,31 @@
+diff --git a/kicad_mcp/tools/routing.py b/kicad_mcp/tools/routing.py
+--- a/kicad_mcp/tools/routing.py
++++ b/kicad_mcp/tools/routing.py
+@@ -15,7 +15,7 @@ from ..errors import ManualStepRequiredError
+ from ..models.common import _PadLike
+ from ..models.pcb import AddTrackInput
+ from ..models.tool_result import ArtifactRef, StateDelta, ToolResult
+-from ..pcb.board_access import board_nets_filtered, board_pads, board_tracks
++from ..pcb.board_access import board_footprints, board_nets_filtered, board_pads, board_tracks
+ from ..pcb.geometry import point_xy_mm, track_segment_length_mm
+ from ..pcb.live_edit_runtime import execute_live_board_mutation
+ from ..utils.freerouting import FreeRoutingRunner
+@@ -46,7 +46,13 @@
+ def _find_pad(reference: str, pad_number: str) -> _PadLike | None:
+-    for pad in cast(list[_PadLike], board_pads(get_board())):
+-        if pad.parent.reference_field.text.value == reference and str(pad.number) == str(
+-            pad_number
+-        ):
+-            return pad
++    # KiCad 10's kipy Pad does not expose the synthetic ``parent`` property used
++    # by newer adapters. Walk footprint definitions, whose pad coordinates are
++    # already board-absolute, so reference lookup works on the pinned runtime.
++    for footprint in board_footprints(get_board()):
++        footprint_reference = str(footprint.reference_field.text.value)
++        if footprint_reference != reference:
++            continue
++        definition = getattr(footprint, "definition", None)
++        for pad in cast(list[_PadLike], list(getattr(definition, "pads", ()))):
++            if str(pad.number) == str(pad_number):
++                return pad
+     return None
