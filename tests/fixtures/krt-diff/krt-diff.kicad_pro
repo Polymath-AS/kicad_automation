@@ -264,7 +264,7 @@
     "pinned_symbol_libs": []
   },
   "meta": {
-    "filename": "krt-electrical.kicad_pro",
+    "filename": "krt-diff.kicad_pro",
     "version": 3
   },
   "net_settings": {
@@ -302,6 +302,7 @@
       "netlist": "",
       "plot": "",
       "specctra_dsn": "",
+      "step": "",
       "vrml": ""
     },
     "page_layout_descr_file": ""
@@ -312,8 +313,8 @@
     "legacy_lib_list": [],
     "top_level_sheets": [
       {
-        "filename": "krt-electrical.kicad_sch",
-        "name": "krt-electrical",
+        "filename": "krt-diff.kicad_sch",
+        "name": "krt-diff",
         "uuid": "00000000-0000-0000-0000-000000000000"
       }
     ]
