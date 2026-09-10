@@ -1,0 +1,15 @@
+{
+  "project": "tests/fixtures/krt-diff/krt-diff.kicad_pcb",
+  "timeout_seconds": 600,
+  "steps": [
+    {
+      "operation": "diff",
+      "nets": ["USB_D_*"],
+      "layers": ["F.Cu", "B.Cu"],
+      "track_width": 0.25,
+      "clearance": 0.2,
+      "diff_pair_gap": 0.25,
+      "diff_pair_intra_match": true
+    }
+  ]
+}

@@ -84,6 +84,11 @@ Correct the ERC coordinate unit/scale contract and expose canonical pin names fr
 **Acceptance:** Adding a no-connect to `J1.SH` clears only that ERC finding without coordinate
 math or file inspection.
 
+**Current evidence:** `scripts/kicad_live_adapter.py` resolves `reference/pin` through live
+symbol and pin-position inspection, sends exact millimetre coordinates with snapping off, and
+reports the ERC finding delta. A disposable KiCad 10.0.4 USB-C fixture cleared only the `SH`
+finding and retained the other pin-not-connected findings after service restart.
+
 ### Make schematic builder schemas match implementation
 
 **Observed:** `sch_build_circuit` examples/documentation used `lib_id`, while runtime validation
@@ -120,6 +125,14 @@ overlap, courtyard, connector edge, antenna keepout, and locked parts.
 **Acceptance:** Auto-placement produces zero hard-constraint violations or returns a non-mutating
 failure identifying unsatisfied constraints.
 
+**Current evidence:** `scripts/kicad_placement.py` derives bounds from Edge.Cuts, checks body and
+courtyard overlap, locked parts, connector edges, and antenna keepouts before mutation. The
+repository contract covers successful constrained placement and unsatisfiable atomic failure.
+`scripts/kicad_live_placement.py` promotes a reviewed position delta through the pinned
+`pcb_move_footprint`/save/reopen path; a disposable KiCad 10 fixture verified saved readback.
+The live adapter is position-oriented because the pinned footprint listing does not expose a
+full rotation/UUID payload; repository constraints still retain the complete intent model.
+
 ### Return trustworthy operation status
 
 **Observed:** `pcb_delete_items` could delete objects but report postcondition verification failure
@@ -155,8 +168,9 @@ source and limitations.
 - **Implemented in the repository adapter:** include stable UUIDs in shape, track, pad, and
   violation inspection results so exact deletion and exclusion are possible.
 - **Implemented in the repository adapter:** selective DRC filters by UUID, rule, type, and
-  reference with mandatory dry-run preview for bulk exclusions; live upstream exclusion wiring
-  remains to be exercised.
+  reference with mandatory dry-run preview for bulk exclusions. The live adapter previews the
+  pinned KiCad 10 DRC report and fails closed rather than invoking the upstream tool's unsafe
+  all-violation writer; selected live execution remains blocked by that upstream schema.
 - **Implemented in the repository adapter:** board-level minimum through-hole and NPTH constraints
   distinguish footprint-internal library exceptions from real board-rule violations.
 - **Implemented in the repository adapter:** `sch_analyze_net_compilation` defaults to the current
@@ -167,6 +181,9 @@ source and limitations.
   paths without implicit nested duplication.
 - **Implemented:** avoid Windows execution-policy friction with scoped `.cmd` launchers. Docker
   permission failures are classified and preserved, while host privilege policy remains external.
+- **Implemented:** live no-connect and ratsnest adapters expose truthful revision/save fields,
+  explicit fallback source/limitations, and domain refusal status instead of treating
+  `isError=false` refusal text as success.
 
 ## Implementation milestones
 
@@ -181,7 +198,11 @@ source and limitations.
   **Partially implemented:** pinned KiCadRoutingTools candidate backend, typed CLI/MCP plans,
   isolated source copies, per-stage ERC/DRC, original-rule restoration and regression detection.
   Repository-level transactional routing, dry-run blockers, rollback and constrained placement
-  contracts are now implemented and unit-tested; live IPC promotion/reopen coverage remains open.
+  contracts are implemented and unit-tested. A disposable pinned KiCad 10 live promotion now
+  covers candidate application, save, `pcb_revert` reopen, readback, net identity, and structured
+  success; live constrained-placement promotion now also covers save/reopen/readback. Saved-source
+  rollback for a copper delta remains open because the pinned live surface does not expose a safe
+  exact-track identity/restore primitive.
   See
   [R1-R6 and detailed execution steps](docs/KICAD_ROUTING_TOOLS.md).
 
@@ -194,3 +215,7 @@ regression, and `scripts/pad_to_pad_regression.py` are in place. In an isolated 
 KiCad 10.0.4 service, J1.1-to-J2.1 was resolved and routed on SIGNAL, saved, read back as live
 tracks, and checked by DRC with zero unconnected items. The fixture's two pre-existing
 `footprint_symbol_mismatch` warnings remain documented; they are not hidden by the regression.
+
+The qualified-footprint synchronization defect is now patched narrowly for kicad-mcp-pro 3.34.0:
+the file-backed renderer preserves the schematic `Library:Footprint` name in the board footprint
+root. The image build regression exercises that renderer before the service starts.

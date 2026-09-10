@@ -13,7 +13,9 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 import json
 import os
-from pathlib import Path
+import hashlib
+from pathlib import Path, PureWindowsPath
+import re
 from typing import Any, Callable, Iterable, Literal, Mapping
 import uuid
 
@@ -353,7 +355,15 @@ def stable_uuid(kind: str, identity: str | Mapping[str, Any]) -> str:
 
 def with_stable_uuid(kind: str, item: Mapping[str, Any], *, identity: str | None = None) -> dict[str, Any]:
     result = dict(item)
-    if not result.get("uuid"):
+    if result.get("uuid"):
+        result.setdefault("uuid_source", "native")
+    elif result.get("id"):
+        # Some KiCad inspection surfaces call the native identity ``id``.
+        # Preserve it verbatim instead of hashing an array position or object
+        # representation into a replacement UUID.
+        result["uuid"] = str(result["id"])
+        result["uuid_source"] = "native"
+    else:
         identity = identity or str(
             result.get("id")
             or result.get("reference")
@@ -361,6 +371,7 @@ def with_stable_uuid(kind: str, item: Mapping[str, Any], *, identity: str | None
             or json.dumps(result, sort_keys=True, separators=(",", ":"))
         )
         result["uuid"] = stable_uuid(kind, identity)
+        result["uuid_source"] = "derived"
     return result
 
 
@@ -463,6 +474,7 @@ def ratsnest_fallback(
                 endpoints.append(endpoint)
     return {
         "source": "get_unconnected_nets+drc",
+        "fallback": True,
         "available": bool(endpoints),
         "limitations": ["fallback reports unconnected endpoints, not live ratsnest geometry"],
         "endpoints": endpoints,
@@ -513,17 +525,97 @@ def select_drc_violations(
     matches = [dict(v) for v in violations if selector.matches(v)]
     if len(matches) > 1 and not dry_run:
         raise ValueError("bulk DRC exclusions require a dry-run preview")
+    selected = [with_stable_uuid("violation", v) for v in matches]
+    preview_payload = json.dumps([item["uuid"] for item in selected], separators=(",", ":"))
     return {
         "status": "preview" if dry_run else "applied",
-        "matched": [with_stable_uuid("violation", v) for v in matches],
-        "excluded_uuids": [with_stable_uuid("violation", v)["uuid"] for v in matches],
+        "preview_id": hashlib.sha256(preview_payload.encode()).hexdigest()[:16],
+        "matched": selected,
+        "excluded_uuids": [item["uuid"] for item in selected],
         "count": len(matches),
     }
 
 
+def execute_drc_exclusions(
+    violations: Iterable[Mapping[str, Any]],
+    selector: DrcExclusionFilter,
+    *,
+    preview: Mapping[str, Any],
+    add_exclusions: Callable[[list[str]], Mapping[str, Any] | None],
+    save: Callable[[], bool] | None = None,
+    reopen: Callable[[], Any] | None = None,
+    list_exclusions: Callable[[], Iterable[str]] | None = None,
+    snapshot: Callable[[], Any] | None = None,
+    restore: Callable[[Any], None] | None = None,
+) -> dict[str, Any]:
+    """Execute exactly the UUIDs shown by a mandatory dry-run preview."""
+    current = select_drc_violations(violations, selector, dry_run=True)
+    if preview.get("status") != "preview" or preview.get("preview_id") != current["preview_id"]:
+        raise ValueError("DRC exclusion preview is stale; generate a new preview")
+    ids = list(current["excluded_uuids"])
+    if not ids:
+        raise ValueError("DRC exclusion selector matched zero violations")
+    before = snapshot() if snapshot is not None else None
+    rolled_back = False
+
+    def rollback() -> None:
+        nonlocal rolled_back
+        if before is not None and restore is not None:
+            restore(before)
+            rolled_back = True
+
+    try:
+        effects = dict(add_exclusions(ids) or {})
+    except Exception as exc:
+        rollback()
+        return operation_result("drc_add_exclusions", state=DocumentState(), status="failure",
+                                verified_effects={"selected_uuids": ids, "rolled_back": rolled_back},
+                                error=str(exc))
+    saved = False
+    if save is not None:
+        saved = bool(save())
+        if not saved:
+            rollback()
+            return operation_result("drc_add_exclusions", state=DocumentState(), status="failure",
+                                    verified_effects={"selected_uuids": ids, "rolled_back": rolled_back},
+                                    error="DRC exclusion save postcondition failed")
+    reopened = False
+    readback_ok = True
+    if reopen is not None:
+        try:
+            reopen()
+            reopened = True
+            if list_exclusions is not None:
+                readback_ok = set(ids).issubset({str(item) for item in list_exclusions()})
+        except Exception as exc:
+            rollback()
+            return operation_result("drc_add_exclusions", state=DocumentState(), status="failure",
+                                    verified_effects={"selected_uuids": ids, "reopened": reopened,
+                                                      "rolled_back": rolled_back},
+                                    error=str(exc))
+    if not readback_ok:
+        rollback()
+        return operation_result("drc_add_exclusions", state=DocumentState(), status="failure",
+                                verified_effects={"selected_uuids": ids, "reopened": reopened,
+                                                  "readback_verified": False, "rolled_back": rolled_back},
+                                error="selected DRC exclusions were not present after reopen")
+    return operation_result(
+        "drc_add_exclusions", state=DocumentState(not saved, saved),
+        verified_effects={"selected_uuids": ids, "preview_id": current["preview_id"],
+                          "reopened": reopened, "readback_verified": readback_ok, **effects},
+    )
+
+
 def resolve_project_paths(root: Path, requested: str) -> dict[str, str]:
     """Resolve a project destination without duplicating ``name/name``."""
-    base = (root / requested).resolve() if not Path(requested).is_absolute() else Path(requested).resolve()
+    windows_style = bool(re.match(r"^[A-Za-z]:[\\/]", requested) or requested.startswith("\\\\"))
+    if windows_style and os.name != "nt":
+        # Keep Windows path semantics testable on the Linux CI image.  A real
+        # Windows process uses pathlib's native implementation below.
+        base = PureWindowsPath(requested)
+    else:
+        requested_path = Path(requested)
+        base = (root / requested_path).resolve() if not requested_path.is_absolute() else requested_path.resolve()
     if base.suffix in {".kicad_pcb", ".kicad_sch", ".kicad_pro"}:
         stem = base.with_suffix("")
         directory = stem.parent
@@ -544,40 +636,79 @@ def resolve_project_paths(root: Path, requested: str) -> dict[str, str]:
 
 
 def precise_schematic_schema() -> dict[str, Any]:
-    """JSON schema for the file-backed schematic builder request."""
+    """JSON schema matching ``kicad-mcp-pro`` 3.34.0 nested builder inputs.
+
+    ``library`` + ``symbol_name`` is the canonical identifier.  The upstream
+    tool has historically documented ``lib_id`` in examples, but accepting it
+    silently makes a request fail later and can replace a schematic first.  We
+    therefore expose one precise contract and reject the legacy spelling before
+    any mutation.
+    """
     pin = {"type": "string", "pattern": r"^[^./\s]+\.[^./\s]+$"}
+    number = {"type": "number"}
     symbol = {
-        "type": "object",
-        "additionalProperties": False,
-        "required": ["library", "symbol_name", "reference"],
+        "type": "object", "additionalProperties": False,
+        "required": ["library", "symbol_name", "reference", "value"],
         "properties": {
-            "library": {"type": "string", "minLength": 1},
-            "symbol_name": {"type": "string", "minLength": 1},
-            "reference": {"type": "string", "pattern": r"^[A-Za-z]+[0-9]+$"},
-            "value": {"type": "string"},
-            "footprint": {"type": "string", "minLength": 1},
+            "library": {"type": "string", "minLength": 1, "maxLength": 120},
+            "symbol_name": {"type": "string", "minLength": 1, "maxLength": 240},
+            "reference": {"type": "string", "pattern": r"^[A-Za-z#]+[0-9]+$"},
+            "value": {"type": "string", "minLength": 1, "maxLength": 240},
+            "footprint": {"type": "string", "maxLength": 240},
+            "x_mm": number, "y_mm": number,
+            "rotation": {"type": "integer", "enum": [0, 90, 180, 270]},
+            "unit": {"type": "integer", "minimum": 1, "maximum": 64},
+            "snap_to_grid": {"type": "boolean"},
+            "properties": {"type": "object", "additionalProperties": {"type": "string"}},
         },
+    }
+    wire = {
+        "type": "object", "additionalProperties": False,
+        "required": ["x1_mm", "y1_mm", "x2_mm", "y2_mm"],
+        "properties": {"x1_mm": number, "y1_mm": number, "x2_mm": number, "y2_mm": number,
+                       "snap_to_grid": {"type": "boolean"}},
+    }
+    label = {
+        "type": "object", "additionalProperties": False,
+        "required": ["name", "x_mm", "y_mm"],
+        "properties": {
+            "name": {"type": "string", "minLength": 1, "maxLength": 240},
+            "x_mm": number, "y_mm": number,
+            "rotation": {"type": "integer", "enum": [0, 90, 180, 270]},
+            "snap_to_grid": {"type": "boolean"}, "global_label": {"type": "boolean"},
+            "kind": {"type": "string", "enum": ["label", "global_label", "hierarchical_label"]},
+            "shape": {"type": "string", "enum": ["input", "output", "bidirectional", "tri_state", "passive"]},
+            "justify": {"type": "string"},
+        },
+    }
+    power = {
+        "type": "object", "additionalProperties": False,
+        "required": ["name", "x_mm", "y_mm"],
+        "properties": {"name": {"type": "string", "minLength": 1, "maxLength": 120},
+                       "x_mm": number, "y_mm": number,
+                       "rotation": {"type": "integer", "enum": [0, 90, 180, 270]},
+                       "snap_to_grid": {"type": "boolean"}},
+    }
+    net = {
+        "type": "object", "additionalProperties": False, "required": ["name", "pins"],
+        "properties": {"name": {"type": "string", "minLength": 1, "maxLength": 240},
+                       "pins": {"type": "array", "minItems": 1, "items": pin},
+                       "scope": {"type": "string", "enum": ["global", "local", "hierarchical"]},
+                       "shape": {"type": "string", "enum": ["input", "output", "bidirectional", "passive"]}},
     }
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
         "additionalProperties": False,
-        "required": ["symbols"],
         "properties": {
-            "auto_layout": {"type": "boolean"},
-            "symbols": {"type": "array", "minItems": 1, "items": symbol},
-            "nets": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["name", "pins"],
-                    "properties": {
-                        "name": {"type": "string", "minLength": 1},
-                        "pins": {"type": "array", "minItems": 2, "items": pin},
-                    },
-                },
-            },
+            "symbols": {"type": ["array", "null"], "items": symbol},
+            "wires": {"type": ["array", "null"], "items": wire},
+            "labels": {"type": ["array", "null"], "items": label},
+            "power_symbols": {"type": ["array", "null"], "items": power},
+            "nets": {"type": ["array", "null"], "items": net},
+            "snap_to_grid": {"type": "boolean"}, "auto_layout": {"type": "boolean"},
+            "unsafe_routed_wires": {"type": "boolean"},
+            "max_paper": {"type": "string", "enum": ["A4", "A3", "A2", "A1", "A0"]},
         },
     }
 
@@ -588,20 +719,39 @@ def validate_schematic_request(request: Mapping[str, Any]) -> None:
     if not isinstance(request, Mapping) or set(request) - set(schema["properties"]):
         raise ValueError("schematic request contains unknown properties")
     symbols = request.get("symbols")
-    if not isinstance(symbols, list) or not symbols:
-        raise ValueError("symbols must be a non-empty list")
+    if symbols is None:
+        symbols = []
+    if not isinstance(symbols, list):
+        raise ValueError("symbols must be an array or null")
     refs: set[str] = set()
     for symbol in symbols:
         if not isinstance(symbol, Mapping) or set(symbol) - set(schema["properties"]["symbols"]["items"]["properties"]):
-            raise ValueError("each symbol must use library, symbol_name, reference, value, footprint")
-        for key in ("library", "symbol_name", "reference"):
+            raise ValueError("each symbol must use the documented library/symbol_name fields")
+        for key in ("library", "symbol_name", "reference", "value"):
             if not isinstance(symbol.get(key), str) or not symbol[key].strip():
                 raise ValueError(f"symbol.{key} is required")
+        if symbol.get("rotation", 0) not in (0, 90, 180, 270):
+            raise ValueError("symbol.rotation must be one of 0, 90, 180, 270")
         if symbol["reference"] in refs:
             raise ValueError(f"duplicate symbol reference: {symbol['reference']}")
         refs.add(symbol["reference"])
+    for key in ("wires", "labels", "power_symbols"):
+        values = request.get(key)
+        if values is None:
+            continue
+        if not isinstance(values, list):
+            raise ValueError(f"{key} must be an array or null")
+        item_schema = schema["properties"][key]["items"]
+        for item in values:
+            if not isinstance(item, Mapping) or set(item) - set(item_schema["properties"]):
+                raise ValueError(f"{key} contains an object with unknown properties")
+            for field in item_schema.get("required", ()):
+                if field not in item:
+                    raise ValueError(f"{key} items require {field}")
     for net in request.get("nets", []) or []:
-        if not isinstance(net, Mapping) or not isinstance(net.get("pins"), list):
+        if not isinstance(net, Mapping) or set(net) - set(schema["properties"]["nets"]["items"]["properties"]):
+            raise ValueError("nets must contain documented name/pins objects")
+        if not isinstance(net.get("name"), str) or not net["name"].strip() or not isinstance(net.get("pins"), list):
             raise ValueError("nets must contain {name, pins} objects")
         for address in net["pins"]:
             if not isinstance(address, str) or address.count(".") != 1:

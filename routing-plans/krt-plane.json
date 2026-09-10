@@ -1,0 +1,17 @@
+{
+  "project": "tests/fixtures/krt-plane/krt-plane.kicad_pcb",
+  "timeout_seconds": 600,
+  "steps": [
+    {
+      "operation": "planes",
+      "nets": ["GND"],
+      "layers": ["B.Cu"],
+      "zone_clearance": 0.25,
+      "clearance": 0.2,
+      "power_nets": ["GND"],
+      "power_nets_widths": [0.5],
+      "stitch_vias": true,
+      "gnd_via_net": "GND"
+    }
+  ]
+}

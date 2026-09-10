@@ -16,8 +16,10 @@ from typing import Any, Callable, Iterable, Mapping
 
 try:
     from kicad_contracts import DocumentState, OperationResult, stable_uuid
+    from kicad_promotion import board_digest
 except ImportError:  # package import from repository root
     from scripts.kicad_contracts import DocumentState, OperationResult, stable_uuid
+    from scripts.kicad_promotion import board_digest
 
 
 Point = tuple[float, float]
@@ -293,14 +295,32 @@ class TransactionalRouter:
     """Plan, optionally preview, and atomically apply a routed path."""
 
     def __init__(self, *, snapshot: Callable[[], Any], apply: Callable[[RoutePlan], Mapping[str, Any] | None],
-                 restore: Callable[[Any], None], validate: Callable[[], bool], state: DocumentState | None = None):
+                 restore: Callable[[Any], None], validate: Callable[[], bool],
+                 save: Callable[[], bool] | None = None, reopen: Callable[[], Any] | None = None,
+                 readback: Callable[[], Mapping[str, Any]] | None = None,
+                 state: DocumentState | None = None):
         self.snapshot = snapshot
         self.apply = apply
         self.restore = restore
         self.validate = validate
+        self.save = save
+        self.reopen = reopen
+        self.readback = readback
         self.state = state or DocumentState()
 
-    def route(self, request: RouteRequest, board: Mapping[str, Any]) -> dict[str, Any]:
+    def route(self, request: RouteRequest, board: Mapping[str, Any], *,
+              expected_revision: int | None = None,
+              expected_source_hash: str | None = None) -> dict[str, Any]:
+        if expected_revision is not None and expected_revision != self.state.document_revision:
+            return OperationResult(
+                "failure", "pcb_route_trace", self.state,
+                error=f"stale document revision: expected {expected_revision}, current {self.state.document_revision}",
+            ).as_dict()
+        if expected_source_hash is not None and expected_source_hash != board_digest(board):
+            return OperationResult(
+                "failure", "pcb_route_trace", self.state,
+                error="source board changed since route planning",
+            ).as_dict()
         planned = GridRouter(board).plan(request)
         if not planned.success:
             return OperationResult("failure", "pcb_route_trace", self.state,
@@ -309,15 +329,50 @@ class TransactionalRouter:
             return OperationResult("success", "pcb_route_trace", self.state,
                                    verified_effects={"dry_run": True, "plan": planned.as_dict()}).as_dict()
         before = self.snapshot()
+        before_digest = board_digest(self.readback()) if self.readback is not None else None
         try:
             effects = self.apply(planned) or {}
+            if self.save is not None:
+                if not self.save():
+                    raise RuntimeError("route save postcondition failed")
+            if self.reopen is not None:
+                self.reopen()
+            if self.readback is not None:
+                after = self.readback()
+                if not all(any(segment == item for item in after.get("tracks", ()))
+                           for segment in planned.segments):
+                    raise RuntimeError("reopened board did not contain every planned segment")
             if not self.validate():
                 raise RuntimeError("post-route DRC validation failed")
-            self.state = DocumentState(True, False, self.state.document_revision + 1)
+            saved = self.save is not None
+            self.state = DocumentState(not saved, saved, self.state.document_revision + 1)
+            verified = {"plan": planned.as_dict(), "reopened": self.reopen is not None,
+                        "readback_verified": self.readback is not None, **dict(effects)}
+            if before_digest is not None:
+                verified["source_digest"] = before_digest
             return OperationResult("success", "pcb_route_trace", self.state,
-                                   verified_effects={"plan": planned.as_dict(), **dict(effects)}).as_dict()
+                                   verified_effects=verified).as_dict()
         except Exception as exc:
-            self.restore(before)
+            rollback_verified = False
+            rollback_error = None
+            try:
+                self.restore(before)
+                if self.save is not None and not self.save():
+                    raise RuntimeError("route rollback save failed")
+                if self.reopen is not None:
+                    self.reopen()
+                if self.readback is not None and before_digest is not None:
+                    rollback_verified = board_digest(self.readback()) == before_digest
+                else:
+                    rollback_verified = True
+                if not rollback_verified:
+                    raise RuntimeError("route rollback readback differs from original board")
+            except Exception as rollback_exc:
+                rollback_error = str(rollback_exc)
+            effects = {"rolled_back": True, "rollback_verified": rollback_verified,
+                       "plan": planned.as_dict()}
+            if rollback_error:
+                effects["rollback_error"] = rollback_error
             return OperationResult("failure", "pcb_route_trace", self.state,
-                                   verified_effects={"rolled_back": True, "plan": planned.as_dict()},
+                                   verified_effects=effects,
                                    error=str(exc)).as_dict()

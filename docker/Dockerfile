@@ -16,6 +16,7 @@ RUN apt-get update \
 
 COPY docker/patches/kicad-mcp-pro-3.34.0-kicad10-pad-lookup.patch /tmp/kicad-mcp-pro.patch
 COPY docker/patches/kicad-mcp-pro-3.34.0-layer-aliases.patch /tmp/kicad-mcp-pro-layers.patch
+COPY docker/patches/kicad-mcp-pro-3.34.0-qualified-footprint.patch /tmp/kicad-mcp-pro-footprint.patch
 COPY docker/tests/verify_kicad_mcp_compat.py /tmp/verify-kicad-mcp-compat.py
 
 RUN patch --batch --fuzz=0 -p1 \
@@ -24,8 +25,12 @@ RUN patch --batch --fuzz=0 -p1 \
  && patch --batch --fuzz=0 -p1 \
       -d /opt/kicad-mcp-pro/lib/python3.13/site-packages \
       </tmp/kicad-mcp-pro-layers.patch \
+ && patch --batch --fuzz=0 -p1 \
+      -d /opt/kicad-mcp-pro/lib/python3.13/site-packages \
+      </tmp/kicad-mcp-pro-footprint.patch \
  && /opt/kicad-mcp-pro/bin/python /tmp/verify-kicad-mcp-compat.py \
  && rm -f /tmp/kicad-mcp-pro.patch /tmp/kicad-mcp-pro-layers.patch \
+      /tmp/kicad-mcp-pro-footprint.patch \
       /tmp/verify-kicad-mcp-compat.py
 
 COPY docker/bin/kicad-runtime /usr/local/bin/kicad-runtime
@@ -40,6 +45,9 @@ COPY scripts/kicad_topology.py /usr/local/lib/kicad-automation/kicad_topology.py
 COPY scripts/kicad_placement.py /usr/local/lib/kicad-automation/kicad_placement.py
 COPY scripts/kicad_schematic.py /usr/local/lib/kicad-automation/kicad_schematic.py
 COPY scripts/kicad_promotion.py /usr/local/lib/kicad-automation/kicad_promotion.py
+COPY scripts/kicad_live_adapter.py /usr/local/lib/kicad-automation/kicad_live_adapter.py
+COPY scripts/kicad_live_promotion.py /usr/local/lib/kicad-automation/kicad_live_promotion.py
+COPY scripts/kicad_live_placement.py /usr/local/lib/kicad-automation/kicad_live_placement.py
 
 RUN sed -i 's/\r$//' \
       /usr/local/bin/kicad-runtime \
@@ -53,6 +61,9 @@ RUN sed -i 's/\r$//' \
       /usr/local/lib/kicad-automation/kicad_placement.py \
       /usr/local/lib/kicad-automation/kicad_schematic.py \
       /usr/local/lib/kicad-automation/kicad_promotion.py \
+      /usr/local/lib/kicad-automation/kicad_live_adapter.py \
+      /usr/local/lib/kicad-automation/kicad_live_promotion.py \
+      /usr/local/lib/kicad-automation/kicad_live_placement.py \
  && chmod 0755 /usr/local/bin/kicad-runtime \
       /usr/local/bin/run-kicad-integration-tests /usr/local/bin/validate-kicad \
       /usr/local/lib/kicad-automation/validate-kicad.sh \

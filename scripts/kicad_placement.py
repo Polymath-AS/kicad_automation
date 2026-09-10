@@ -10,9 +10,11 @@ from typing import Any, Iterable, Mapping
 try:
     from kicad_contracts import DocumentState, OperationResult
     from kicad_topology import Point, Rect, _point
+    from kicad_promotion import PlacementPromotion
 except ImportError:  # package import from repository root
     from scripts.kicad_contracts import DocumentState, OperationResult
     from scripts.kicad_topology import Point, Rect, _point
+    from scripts.kicad_promotion import PlacementPromotion
 
 
 def _rect_for_footprint(item: Mapping[str, Any], *, courtyard: bool = True) -> Rect:
@@ -36,6 +38,7 @@ class PlacementRequest:
     max_edge_distance: float = 2.0
     search_radius: float = 12.0
     step: float = 1.0
+    intent: Mapping[str, Any] | None = None
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "PlacementRequest":
@@ -46,6 +49,7 @@ class PlacementRequest:
             antenna_keepout=Rect.from_value(keepout) if isinstance(keepout, Mapping) else None,
             max_edge_distance=float(value.get("max_edge_distance", 2.0)),
             search_radius=float(value.get("search_radius", 12.0)), step=float(value.get("step", 1.0)),
+            intent=value.get("intent") if isinstance(value.get("intent"), Mapping) else None,
         )
 
 
@@ -157,8 +161,16 @@ class ConstraintPlacement:
             if item is None:
                 violations.append({"constraint": "reference_exists", "reference": request.reference})
                 continue
-            if request.connector_edge is None and item.get("connector_edge"):
-                request = replace(request, connector_edge=str(item["connector_edge"]))
+            intent = request.intent or item.get("intent") or {}
+            connector_edge = request.connector_edge or item.get("connector_edge") or intent.get("connector_edge") or intent.get("edge")
+            antenna = request.antenna_keepout
+            if antenna is None:
+                candidate_keepout = item.get("antenna_keepout") or item.get("antenna_region") or intent.get("antenna_keepout")
+                if isinstance(candidate_keepout, Mapping):
+                    antenna = Rect.from_value(candidate_keepout)
+            if connector_edge != request.connector_edge or antenna != request.antenna_keepout:
+                request = replace(request, connector_edge=str(connector_edge) if connector_edge else None,
+                                  antenna_keepout=antenna)
             if item.get("locked") or request.locked:
                 # A locked part may be accepted only at its current location.
                 current = _point(item.get("position", item))
@@ -218,6 +230,56 @@ def apply_placement(
         board.update(before)
         return OperationResult("failure", "pcb_place_components", current_state,
                                verified_effects={"rolled_back": True}, error=str(exc)).as_dict()
+
+
+def placement_requests_from_candidate(
+    source: Mapping[str, Any], candidate: Mapping[str, Any],
+) -> list[PlacementRequest]:
+    """Translate a reviewed candidate board into constraint-checked requests."""
+    source_items = {str(item.get("uuid") or item.get("reference")): item
+                    for item in source.get("footprints", ()) or () if isinstance(item, Mapping)}
+    requests: list[PlacementRequest] = []
+    for item in candidate.get("footprints", ()) or ():
+        if not isinstance(item, Mapping):
+            continue
+        ident = str(item.get("uuid") or item.get("reference"))
+        original = source_items.get(ident)
+        if original is None:
+            continue
+        position = _point(item.get("position", item))
+        if position is None:
+            raise ValueError(f"candidate footprint {ident} has no position")
+        intent = item.get("intent") if isinstance(item.get("intent"), Mapping) else original.get("intent")
+        requests.append(PlacementRequest(
+            reference=str(item.get("reference") or original.get("reference")), position=position,
+            locked=bool(item.get("locked", original.get("locked", False))), intent=intent,
+        ))
+    return requests
+
+
+def promote_placement_candidate(
+    source: Mapping[str, Any], candidate: Mapping[str, Any], *,
+    read_board: Any, snapshot: Any, apply_delta: Any, restore: Any,
+    save: Any, reopen: Any, validate: Any, state: DocumentState | None = None,
+    expected_revision: int | None = None, expected_source_hash: str | None = None,
+) -> dict[str, Any]:
+    """Validate intent constraints, then promote with save/reopen/rollback checks."""
+    requests = placement_requests_from_candidate(source, candidate)
+    validation_board = deepcopy(source)
+    planned = ConstraintPlacement(validation_board).plan(requests)
+    if not planned.success:
+        return OperationResult(
+            "failure", "pcb_place_components", state or DocumentState(),
+            verified_effects={"rolled_back": True, "plan": planned.as_dict()},
+            blockers=planned.violations, error="placement candidate violates hard constraints",
+        ).as_dict()
+    promotion = PlacementPromotion(
+        read_board=read_board, snapshot=snapshot, apply_delta=apply_delta,
+        restore=restore, save=save, reopen=reopen, validate=validate, state=state,
+    )
+    return promotion.promote(candidate, expected_revision=expected_revision,
+                             expected_source_hash=expected_source_hash,
+                             candidate_validate=lambda _: True)
 
 
 def distance(a: Point, b: Point) -> float:

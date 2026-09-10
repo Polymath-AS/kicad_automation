@@ -35,6 +35,35 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(args[-4:], ['--nets', '*', '--layers', 'F.Cu'])
         self.assertNotIn('--overwrite', args)
 
+    def test_differential_and_plane_controls_are_typed_and_dispatched(self):
+        diff = plan()
+        diff['steps'][0].update({
+            'operation': 'diff', 'diff_pair_gap': 0.2, 'impedance': 90,
+            'diff_pair_intra_match': True,
+        })
+        normalized = routing.validate_plan(diff)
+        args = routing.command(Path('/router'), normalized['steps'][0], Path('/in'), Path('/out'))
+        self.assertIn('--diff-pair-gap', args)
+        self.assertIn('--impedance', args)
+        self.assertIn('--diff-pair-intra-match', args)
+        plane = plan()
+        plane['steps'][0].update({
+            'operation': 'planes', 'power_nets': ['VCC'], 'power_nets_widths': [0.5],
+            'zone_clearance': 0.3, 'stitch_vias': True,
+        })
+        normalized = routing.validate_plan(plane)
+        args = routing.command(Path('/router'), normalized['steps'][0], Path('/in'), Path('/out'))
+        self.assertIn('--power-nets', args)
+        self.assertIn('--power-nets-widths', args)
+        self.assertIn('--zone-clearance', args)
+        self.assertIn('--stitch-vias', args)
+
+    def test_electrical_controls_cannot_leak_between_operations(self):
+        p = plan()
+        p['steps'][0].update({'operation': 'route', 'diff_pair_gap': 0.2})
+        with self.assertRaisesRegex(ValueError, 'differential controls'):
+            routing.validate_plan(p)
+
     def test_path_escape(self):
         with tempfile.TemporaryDirectory() as temp:
             with self.assertRaises(ValueError):

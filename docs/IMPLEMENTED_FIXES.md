@@ -1,6 +1,6 @@
 # Implemented KiCad Automation Fixes
 
-Last updated: 2026-09-09
+Last updated: 2026-09-10
 
 This document is the delivery record for the problem backlog in [`fixes.md`](../fixes.md). It
 separates shipped behavior from work that has only been diagnosed or partially implemented.
@@ -54,7 +54,7 @@ forwarding for both launchers.
 - The Docker integration test asserts the required workflow tools are present whenever the
   builder profile is selected, preventing silent catalog shrinkage during dependency upgrades.
 - The experimental `route_from_pad_to_pad` helper is intentionally not part of the stable
-  write-mode promise; `pcb_route_trace` remains available while M4 is open.
+  write-mode promise; `pcb_route_trace` remains available alongside the verified M4 regression.
 
 Verification: the full Docker integration passed against the minimal fixture with both live PCB
 and file-backed schematic tools in one server session, followed by clean ERC and DRC.
@@ -83,17 +83,30 @@ applying the version-pinned patch.
 - `scripts/kicad_placement.py` derives hard placement bounds from Edge.Cuts and enforces courtyard
   overlap, connector-edge, antenna-keepout and locked-part constraints without mutating an
   unsatisfiable board.
+- `tests/fixtures/placement-intent/placement_intent.json` provides deterministic connector/RF
+  intent, edge, antenna, and locked-part data for the placement contract regressions.
 - `scripts/kicad_schematic.py` validates complete nested requests before mutation and resolves
   canonical component pins (including USB shield names such as `SH`).
 - `preserve_footprint_ids` reports library-qualified schematic/PCB footprint parity and stable
   mismatch UUIDs so synchronization cannot silently drop a library prefix.
 - `scripts/kicad_promotion.py` computes a reviewed copper delta and supplies stale-source checks,
   save/re-read validation and IPC rollback hooks. Automatic promotion remains opt-in.
+- `scripts/kicad_live_adapter.py` adds named-pin no-connect resolution, ERC delta reporting,
+  revision-aware stale rejection, KiCad 10 ratsnest fallback metadata, selective DRC previews,
+  and fail-closed handling for upstream domain refusals.
+- `scripts/kicad_live_promotion.py` binds reviewed copper deltas to the supported live IPC track,
+  save, reload, readback, and validation calls. `tests/integration_live_promotion.py` covers the
+  successful pinned-runtime path on a disposable board.
+- `scripts/kicad_live_placement.py` binds reviewed footprint position deltas to live
+  `pcb_move_footprint`, save, reload, readback, and explicit position restoration callbacks.
+  `tests/integration_live_placement.py` covers the successful pinned-runtime path; unit coverage
+  injects a post-save validation failure and verifies rollback to the saved source.
 
 Verification: `tests/test_design_contracts.py` covers stale writes, postcondition rollback,
 blocking-object dry runs, constrained placement success/failure, named-pin no-connects, nested
 schema rejection, selective exclusions, board-hole classification, truthful delete failures and
-stable route-pad schema handling. The full Python suite passed with 44 tests.
+stable route-pad schema handling. The earlier baseline suite passed with 44 tests; the current
+suite and new live-adapter regressions are recorded below.
 
 ## Partially shipped
 
@@ -114,7 +127,7 @@ stable route-pad schema handling. The full Python suite passed with 44 tests.
 
 Detailed implementation, commands and the sequenced remaining plan are in
 [`KICAD_ROUTING_TOOLS.md`](KICAD_ROUTING_TOOLS.md). Generic routing has real copper-creation
-coverage; differential and plane dispatch are implemented but electrical fixtures remain open.
+coverage; differential and plane dispatch now have deterministic electrical fixture coverage.
 
 ### KiCad 10 pad lookup for pad-to-pad routing
 
@@ -135,30 +148,47 @@ zero `unconnected_items`. The only remaining DRC findings were the fixture's two
 `footprint_symbol_mismatch` warnings. The source fixture was copied to a disposable directory and
 was not modified.
 
+### Qualified schematic-to-PCB footprint IDs
+
+- `docker/patches/kicad-mcp-pro-3.34.0-qualified-footprint.patch` is scoped to the pinned
+  kicad-mcp-pro 3.34.0 renderer and preserves the schematic `Library:Footprint` identity in the
+  board footprint root.
+- `docker/tests/verify_kicad_mcp_compat.py` renders a qualified fixture and fails if the library
+  prefix is dropped. The Docker image applies the patch with `--fuzz=0` and runs that regression.
+
 ## Still open
 
-- Live upstream wiring of pin-addressed schematic no-connect placement and corrected ERC
-  coordinate units (the adapter contract and rollback path are implemented and unit-tested).
-- Live upstream wiring of precise nested schematic-builder schemas and save/revision semantics
-  (the repository contract is implemented and unit-tested).
-- Live upstream placement promotion and complete connector/module intent fixtures.
-- KiCad 10 ratsnest fallback consumption by the upstream tool (the fallback data contract is
-  implemented and unit-tested).
-- Selective DRC exclusions, stable inspection UUIDs, and project path semantics are implemented
-  in the repository adapter; selective upstream MCP exposure remains to be exercised live.
-- Reviewed live IPC promotion/rollback of obstacle-aware routing candidates (adapter hooks are
-  implemented; an interrupted real promotion/reopen regression remains).
+- Upstream does not yet expose `{reference, pin}` directly or a live document revision field;
+  `scripts/kicad_live_adapter.py` supplies the supported resolution boundary, explicit mm contract,
+  ERC delta, and digest-based stale rejection. The pinned USB-C `J1.SH` path was live-tested.
+- Precise nested builder schemas and adapter save/revision semantics are implemented and covered;
+  the upstream builder remains a file-backed tool with no independent schematic-save operation.
+- Complete live connector/module intent fixtures and live rotation/UUID parity remain open; the
+  pinned disposable position-promotion path is verified.
+- KiCad 10 ratsnest fallback consumption by the upstream tool; the live adapter now consumes
+  `get_unconnected_nets` plus DRC and returns `fallback=true`, source, endpoints, and limitations.
+- Selective DRC preview, stable native/derived UUID provenance, and project path semantics are
+  implemented. The pinned upstream exclusion writer remains unsafe/all-violations-only, so live
+  execution fails closed until its schema is corrected upstream.
+- Saved-source rollback for a promoted copper delta remains open because the pinned live surface
+  lacks a safe exact-track identity/restore primitive. Successful live routing and placement
+  promotion/reopen are covered by `tests/integration_live_promotion.py` and
+  `tests/integration_live_placement.py`; injected failure and atomic rollback are covered by the
+  repository transaction tests.
 
 ## Current verification baseline
 
-- Python unit/contract suite: 44 tests passing, including candidate-routing and transactional
-  routing/placement regressions.
+- Python unit/contract suite: 62 tests passing, including candidate-routing, electrical controls,
+  live-adapter, and transactional routing/placement regressions.
 - Container build: `local/kicad-automation:10.0.4-mcp-pro` builds with the compatibility test.
 - Fixture validation: ERC clean, DRC clean, detailed reports persisted under
   `.kicad-automation/reports/`.
 
-Routing integration: real stdio MCP and Rust generic routing passed on `krt-smoke`; unconnected
-count 1 -> 0, ERC 0, DRC two unchanged footprint-symbol warnings. Candidate remains
-`needs_review`; no automatic apply. Fixture source unchanged. See the routing guide for the
-exact command and remaining electrical coverage. The original minimal fixture's clean result
-above is distinct from this intentionally unrouted fixture.
+Routing integration: real stdio MCP and Rust generic routing passed on `krt-smoke`; the new
+differential fixture reduced unconnected count 4 -> 2 and the plane fixture preserved the
+baseline count while creating a GND zone. Both remain `needs_review` because unrelated nets are
+intentionally unrouted. The disposable live-promotion regression returned saved/readback success;
+the post-mutation validator reported ERC 0 and only expected remaining fixture DRC findings. The
+disposable live-placement regression moved J1, saved it, reopened it through IPC, and a service
+restart read back the promoted position; its validator likewise reported ERC 0 and the fixture's
+expected unconnected/mismatch DRC findings.

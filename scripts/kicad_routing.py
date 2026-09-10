@@ -41,7 +41,14 @@ except ImportError:  # direct repository execution
 REVISION = "529f873d4c4c20493b1fa786cc9b42ce6cce2945"
 SCRIPTS = {"route": "route.py", "diff": "route_diff.py", "planes": "route_planes.py"}
 NUMBERS = {"track_width": (0.05, 10), "clearance": (0.05, 10),
-           "via_size": (0.1, 10), "via_drill": (0.05, 5), "grid_step": (0.025, 1)}
+           "via_size": (0.1, 10), "via_drill": (0.05, 5), "grid_step": (0.025, 1),
+           "diff_pair_gap": (0.05, 10), "impedance": (1, 1000),
+           "coplanar_gap": (0.05, 10), "zone_clearance": (0.05, 10),
+           "gnd_via_distance": (0.1, 100), "length_match_tolerance": (0.01, 100)}
+DIFF_ONLY = {"diff_pair_gap", "impedance", "coplanar_gap", "diff_pair_intra_match", "length_match_tolerance"}
+PLANE_ONLY = {"zone_clearance", "power_nets", "power_nets_widths", "stitch_vias",
+              "add_gnd_vias", "gnd_via_net", "gnd_via_distance"}
+BOOL_OPTIONS = {"diff_pair_intra_match", "stitch_vias", "add_gnd_vias"}
 
 
 class RoutingStep(TypedDict):
@@ -53,6 +60,18 @@ class RoutingStep(TypedDict):
     via_size: NotRequired[float]
     via_drill: NotRequired[float]
     grid_step: NotRequired[float]
+    diff_pair_gap: NotRequired[float]
+    impedance: NotRequired[float]
+    coplanar_gap: NotRequired[float]
+    zone_clearance: NotRequired[float]
+    power_nets: NotRequired[list[str]]
+    power_nets_widths: NotRequired[list[float]]
+    diff_pair_intra_match: NotRequired[bool]
+    stitch_vias: NotRequired[bool]
+    add_gnd_vias: NotRequired[bool]
+    gnd_via_net: NotRequired[str]
+    gnd_via_distance: NotRequired[float]
+    length_match_tolerance: NotRequired[float]
 
 
 class RoutingPlan(TypedDict):
@@ -100,11 +119,17 @@ def validate_plan(plan: dict) -> dict:
         raise ValueError("steps must contain 1..8 routing operations")
     normalized = []
     for step in steps:
-        if not isinstance(step, dict) or set(step) - {"operation", "nets", "layers", *NUMBERS}:
+        allowed = {"operation", "nets", "layers", *NUMBERS, "power_nets", "power_nets_widths",
+                   *BOOL_OPTIONS, "gnd_via_net"}
+        if not isinstance(step, dict) or set(step) - allowed:
             raise ValueError("unknown step option; arbitrary upstream arguments are not accepted")
         operation = step.get("operation")
         if operation not in SCRIPTS:
             raise ValueError("operation must be route, diff, or planes")
+        if operation != "diff" and set(step) & DIFF_ONLY:
+            raise ValueError("differential controls are only valid for diff steps")
+        if operation != "planes" and set(step) & PLANE_ONLY:
+            raise ValueError("plane controls are only valid for planes steps")
         nets = step.get("nets")
         if not isinstance(nets, list) or not 1 <= len(nets) <= 100 or any(
             not isinstance(n, str) or not n or n.startswith("-") or len(n) > 256
@@ -122,6 +147,27 @@ def validate_plan(plan: dict) -> dict:
                 if type(value) not in (int, float) or not math.isfinite(value) or not low <= value <= high:
                     raise ValueError(f"{name} must be between {low} and {high} mm")
                 clean[name] = value
+        if "power_nets" in step:
+            values = step["power_nets"]
+            if not isinstance(values, list) or not values or any(not isinstance(v, str) or not v for v in values):
+                raise ValueError("power_nets must be a non-empty string list on plane steps")
+            clean["power_nets"] = values
+        if "power_nets_widths" in step:
+            values = step["power_nets_widths"]
+            if not isinstance(values, list) or any(type(v) not in (int, float) or not math.isfinite(v) or not 0.05 <= v <= 10 for v in values):
+                raise ValueError("power_nets_widths must contain finite widths between 0.05 and 10 mm")
+            if "power_nets" not in clean or len(values) != len(clean["power_nets"]):
+                raise ValueError("power_nets_widths must match power_nets length")
+            clean["power_nets_widths"] = values
+        for name in BOOL_OPTIONS:
+            if name in step:
+                if not isinstance(step[name], bool):
+                    raise ValueError(f"{name} must be boolean")
+                clean[name] = step[name]
+        if "gnd_via_net" in step:
+            if not isinstance(step["gnd_via_net"], str) or not step["gnd_via_net"]:
+                raise ValueError("gnd_via_net must be a non-empty net name")
+            clean["gnd_via_net"] = step["gnd_via_net"]
         if clean.get("via_drill", 0) >= clean.get("via_size", 100):
             raise ValueError("via_drill must be smaller than via_size")
         normalized.append(clean)
@@ -135,6 +181,15 @@ def command(root: Path, step: dict, board: Path, output: Path) -> list[str]:
     for name in NUMBERS:
         if name in step:
             args += ["--" + name.replace("_", "-"), str(step[name])]
+    if "power_nets" in step:
+        args += ["--power-nets", *step["power_nets"]]
+    if "power_nets_widths" in step:
+        args += ["--power-nets-widths", *(str(v) for v in step["power_nets_widths"])]
+    if "gnd_via_net" in step:
+        args += ["--gnd-via-net", step["gnd_via_net"]]
+    for name in BOOL_OPTIONS:
+        if step.get(name):
+            args.append("--" + name.replace("_", "-"))
     return args
 
 
