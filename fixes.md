@@ -275,3 +275,8 @@ tracks, and checked by DRC with zero unconnected items. The fixture's two pre-ex
 The qualified-footprint synchronization defect is now patched narrowly for kicad-mcp-pro 3.34.0:
 the file-backed renderer preserves the schematic `Library:Footprint` name in the board footprint
 root. The image build regression exercises that renderer before the service starts.
+
+
+##Missing Functionality
+ A way to find component data when selecting components before placement.
+ Historical pictures of the board/schematic to see how it has changed over time.

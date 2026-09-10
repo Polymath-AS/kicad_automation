@@ -1,0 +1,7 @@
+Design a KiCad PCB for the following:
+Create a 4 layer esp32 board with a temperature sensor and a rgb led. It should be powered and programmed by USB-C
+Follow the repository's AGENTS.md instructions and use the ee-design skill to drive the design process.
+Start from the intended function, develop a sensible architecture, select and verify suitable components, then create and review the schematic before proceeding to PCB placement and routing.
+Use reasonable engineering judgment and research where needed. Make sensible assumptions rather than asking me about every unspecified detail. Only ask me if a missing decision would materially change what the product is supposed to be.
+Create and maintain the normal design/ state/documentation for the project as defined by the skill.
+Continue through the design workflow as far as the available tools and validation allow. Do not skip engineering review just because ERC or DRC passes.
