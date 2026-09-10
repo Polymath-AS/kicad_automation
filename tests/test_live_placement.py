@@ -15,6 +15,15 @@ class LivePlacementTests(unittest.TestCase):
         self.assertEqual([item["reference"] for item in items], ["J1", "J2"])
         self.assertEqual(items[0]["position"], {"x_mm": 30.0, "y_mm": 30.0})
 
+    def test_parse_preserves_rotation_and_rejects_truncated_native_uuid(self):
+        response = {"result": {"structuredContent": {"result":
+            "Footprints (1 total):\n"
+            "- J1 (J1) @ (30.00, 30.00) mm layer=F.Cu rot=90 id=681681d4..."}}}
+        items = parse_live_footprints(response)
+        self.assertEqual(items[0]["rotation"], 90.0)
+        self.assertNotIn("uuid", items[0])
+        self.assertEqual(items[0]["uuid_display"], "681681d4...")
+
     def test_live_style_placement_rollback_after_save(self):
         board = {"footprints": [
             {"reference": "J1", "position": {"x_mm": 30.0, "y_mm": 30.0}},

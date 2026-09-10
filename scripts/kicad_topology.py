@@ -339,8 +339,8 @@ class TransactionalRouter:
                 self.reopen()
             if self.readback is not None:
                 after = self.readback()
-                if not all(any(segment == item for item in after.get("tracks", ()))
-                           for segment in planned.segments):
+                actual_tracks = [item for item in after.get("tracks", ()) if isinstance(item, Mapping)]
+                if not all(any(segment == item for item in actual_tracks) for segment in planned.segments):
                     raise RuntimeError("reopened board did not contain every planned segment")
             if not self.validate():
                 raise RuntimeError("post-route DRC validation failed")
@@ -355,6 +355,7 @@ class TransactionalRouter:
         except Exception as exc:
             rollback_verified = False
             rollback_error = None
+            rollback_attempted = True
             try:
                 self.restore(before)
                 if self.save is not None and not self.save():
@@ -369,10 +370,14 @@ class TransactionalRouter:
                     raise RuntimeError("route rollback readback differs from original board")
             except Exception as rollback_exc:
                 rollback_error = str(rollback_exc)
-            effects = {"rolled_back": True, "rollback_verified": rollback_verified,
+            effects = {"rolled_back": rollback_attempted, "rollback_attempted": rollback_attempted,
+                       "rollback_verified": rollback_verified,
+                       "recovery_required": not rollback_verified,
                        "plan": planned.as_dict()}
             if rollback_error:
                 effects["rollback_error"] = rollback_error
-            return OperationResult("failure", "pcb_route_trace", self.state,
+            return OperationResult("failure" if rollback_verified else "partial", "pcb_route_trace", self.state,
                                    verified_effects=effects,
-                                   error=str(exc)).as_dict()
+                                   error=str(exc), retryable=rollback_verified,
+                                   rollback_attempted=rollback_attempted,
+                                   rollback_verified=rollback_verified).as_dict()

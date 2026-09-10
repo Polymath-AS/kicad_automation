@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from copy import deepcopy
 from typing import Any, Iterable, Mapping
+import math
 
 try:
     from kicad_contracts import DocumentState, OperationResult
@@ -39,6 +40,7 @@ class PlacementRequest:
     search_radius: float = 12.0
     step: float = 1.0
     intent: Mapping[str, Any] | None = None
+    rotation: float | None = None
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "PlacementRequest":
@@ -50,6 +52,7 @@ class PlacementRequest:
             max_edge_distance=float(value.get("max_edge_distance", 2.0)),
             search_radius=float(value.get("search_radius", 12.0)), step=float(value.get("step", 1.0)),
             intent=value.get("intent") if isinstance(value.get("intent"), Mapping) else None,
+            rotation=float(value["rotation"]) if value.get("rotation") is not None else None,
         )
 
 
@@ -58,21 +61,67 @@ class PlacementPlan:
     success: bool
     positions: dict[str, Point]
     violations: list[dict[str, Any]]
+    rotations: dict[str, float] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "success": self.success,
             "positions": {ref: {"x_mm": p[0], "y_mm": p[1]} for ref, p in self.positions.items()},
             "violations": self.violations,
+            "rotations": dict(self.rotations or {}),
         }
 
 
 def board_edge_bounds(board: Mapping[str, Any]) -> Rect:
     """Derive placement bounds from Edge.Cuts, never from a schematic frame."""
     outline = board.get("edge_cuts") or board.get("Edge.Cuts") or board.get("outline") or board.get("bounds")
+    if isinstance(outline, list) and outline:
+        points = [_point(item) for item in outline if isinstance(item, Mapping)]
+        if points:
+            return Rect(min(x for x, _ in points), min(y for _, y in points),
+                        max(x for x, _ in points), max(y for _, y in points))
     if not isinstance(outline, Mapping):
         raise ValueError("Edge.Cuts outline is required for constrained placement")
+    if isinstance(outline.get("outer"), Mapping):
+        outline = outline["outer"]
+    if isinstance(outline.get("points"), list) and outline["points"]:
+        points = [_point(item) for item in outline["points"] if isinstance(item, Mapping)]
+        if points:
+            return Rect(min(x for x, _ in points), min(y for _, y in points),
+                        max(x for x, _ in points), max(y for _, y in points))
     return Rect.from_value(outline)
+
+
+def _outline_points(board: Mapping[str, Any]) -> tuple[list[Point], list[list[Point]]]:
+    outline = board.get("edge_cuts") or board.get("Edge.Cuts") or board.get("outline")
+    if isinstance(outline, Mapping) and isinstance(outline.get("outer"), Mapping):
+        outer = outline["outer"]
+        cutouts = outline.get("cutouts", ())
+    else:
+        outer, cutouts = outline, ()
+    def points(value: Any) -> list[Point]:
+        if isinstance(value, Mapping) and isinstance(value.get("points"), list):
+            return [_point(item) for item in value["points"] if isinstance(item, Mapping)]
+        if isinstance(value, list):
+            return [_point(item) for item in value if isinstance(item, Mapping)]
+        return []
+    return points(outer), [points(item) for item in cutouts if points(item)]
+
+
+def _point_in_polygon(point: Point, polygon: list[Point]) -> bool:
+    inside = False
+    for index, current in enumerate(polygon):
+        previous = polygon[index - 1]
+        if (current[1] > point[1]) != (previous[1] > point[1]):
+            x = (previous[0] - current[0]) * (point[1] - current[1]) / ((previous[1] - current[1]) or 1e-12) + current[0]
+            if point[0] < x:
+                inside = not inside
+    return inside
+
+
+def _rect_corners(rect: Rect) -> tuple[Point, ...]:
+    return ((rect.left, rect.bottom), (rect.left, rect.top),
+            (rect.right, rect.bottom), (rect.right, rect.top))
 
 
 def _translate(rect: Rect, origin: Point, position: Point) -> Rect:
@@ -84,12 +133,25 @@ def _overlap(a: Rect, b: Rect) -> bool:
     return not (a.right <= b.left or b.right <= a.left or a.top <= b.bottom or b.top <= a.bottom)
 
 
+def _rotate_rect(rect: Rect, origin: Point, degrees: float) -> Rect:
+    radians = math.radians(degrees % 360)
+    cos_value, sin_value = math.cos(radians), math.sin(radians)
+    corners = []
+    for point in _rect_corners(rect):
+        dx, dy = point[0] - origin[0], point[1] - origin[1]
+        corners.append((origin[0] + dx * cos_value - dy * sin_value,
+                        origin[1] + dx * sin_value + dy * cos_value))
+    return Rect(min(x for x, _ in corners), min(y for _, y in corners),
+                max(x for x, _ in corners), max(y for _, y in corners))
+
+
 class ConstraintPlacement:
     """Deterministic greedy placement with hard-failure/no-mutation semantics."""
 
     def __init__(self, board: Mapping[str, Any]):
         self.board = board
         self.bounds = board_edge_bounds(board)
+        self.outline, self.cutouts = _outline_points(board)
         self.antenna_keepouts = [
             Rect.from_value(item)
             for item in (board.get("antenna_keepouts", ()) or ())
@@ -98,13 +160,25 @@ class ConstraintPlacement:
 
     def _violations(self, item: Mapping[str, Any], position: Point, placed: Mapping[str, Rect], request: PlacementRequest) -> list[dict[str, Any]]:
         origin = _point(item.get("position", item))
-        body = _translate(_rect_for_footprint(item, courtyard=False), origin, position)
-        courtyard = _translate(_rect_for_footprint(item), origin, position)
+        current_rotation = float(item.get("rotation", 0.0) or 0.0)
+        target_rotation = current_rotation if request.rotation is None else request.rotation
+        body = _rotate_rect(_translate(_rect_for_footprint(item, courtyard=False), origin, position),
+                            position, target_rotation - current_rotation)
+        courtyard = _rotate_rect(_translate(_rect_for_footprint(item), origin, position),
+                                 position, target_rotation - current_rotation)
         violations: list[dict[str, Any]] = []
         if body.left < self.bounds.left or body.right > self.bounds.right or body.bottom < self.bounds.bottom or body.top > self.bounds.top:
             violations.append({"constraint": "inside_board", "reference": request.reference,
                                "coordinate": {"x_mm": position[0], "y_mm": position[1]},
                                "reason": "footprint extends outside Edge.Cuts"})
+        if self.outline and any(not _point_in_polygon(corner, self.outline) for corner in _rect_corners(body)):
+            violations.append({"constraint": "inside_board", "reference": request.reference,
+                               "coordinate": {"x_mm": position[0], "y_mm": position[1]},
+                               "reason": "footprint corner is outside the Edge.Cuts polygon"})
+        if any(_point_in_polygon(corner, cutout) for cutout in self.cutouts for corner in _rect_corners(body)):
+            violations.append({"constraint": "inside_board", "reference": request.reference,
+                               "coordinate": {"x_mm": position[0], "y_mm": position[1]},
+                               "reason": "footprint overlaps an Edge.Cuts cutout"})
         for reference, other in placed.items():
             if _overlap(courtyard, other):
                 violations.append({"constraint": "courtyard_overlap", "reference": request.reference,
@@ -149,6 +223,7 @@ class ConstraintPlacement:
         items = {str(item.get("reference")): item for item in self.board.get("footprints", ()) or () if isinstance(item, Mapping)}
         placed: dict[str, Rect] = {}
         positions: dict[str, Point] = {}
+        rotations: dict[str, float] = {}
         violations: list[dict[str, Any]] = []
         # Existing locked footprints are hard obstacles.
         for reference, item in items.items():
@@ -180,6 +255,8 @@ class ConstraintPlacement:
                                        "reason": "locked footprint cannot move"})
                 placed[request.reference] = _rect_for_footprint(item)
                 positions[request.reference] = current
+                if item.get("rotation") is not None:
+                    rotations[request.reference] = float(item.get("rotation", 0.0))
                 continue
             found = None
             last: list[dict[str, Any]] = []
@@ -192,10 +269,16 @@ class ConstraintPlacement:
                 violations.extend(last or [{"constraint": "unsatisfiable", "reference": request.reference}])
                 continue
             positions[request.reference] = found
-            placed[request.reference] = _translate(_rect_for_footprint(item), _point(item.get("position", item)), found)
+            current_rotation = float(item.get("rotation", 0.0) or 0.0)
+            target_rotation = current_rotation if request.rotation is None else request.rotation
+            rotations[request.reference] = target_rotation
+            placed[request.reference] = _rotate_rect(
+                _translate(_rect_for_footprint(item), _point(item.get("position", item)), found),
+                found, target_rotation - current_rotation,
+            )
         # Include untouched unlocked items in overlap checks for subsequent
         # requests, without moving them.
-        return PlacementPlan(not violations, positions, violations)
+        return PlacementPlan(not violations, positions, violations, rotations)
 
 
 def apply_placement(
@@ -222,6 +305,8 @@ def apply_placement(
         for reference, position in plan.positions.items():
             if reference in by_ref:
                 by_ref[reference]["position"] = {"x_mm": position[0], "y_mm": position[1]}
+                if reference in (plan.rotations or {}):
+                    by_ref[reference]["rotation"] = plan.rotations[reference]
         return OperationResult("success", "pcb_place_components",
                                DocumentState(True, False, current_state.document_revision + 1),
                                verified_effects={"plan": plan.as_dict()}).as_dict()
@@ -253,6 +338,7 @@ def placement_requests_from_candidate(
         requests.append(PlacementRequest(
             reference=str(item.get("reference") or original.get("reference")), position=position,
             locked=bool(item.get("locked", original.get("locked", False))), intent=intent,
+            rotation=float(item["rotation"]) if item.get("rotation") is not None else None,
         ))
     return requests
 

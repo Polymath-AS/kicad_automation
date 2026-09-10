@@ -500,3 +500,22 @@ environment failures separately from code failures, and remaining acceptance gap
 unaffected M4 integration merely to reorganize documentation. Run affected suites after final edits,
 inspect the diff, and update all cross-links/statuses consistently. A missing external capability
 blocks that subcriterion; it does not justify skipping independent work packages.
+
+## Execution checkpoint — 2026-09-10
+
+The current working tree implements and tests the repository-side portions of WP1-WP3 and
+WP6-WP7: strict routing-plan validation with credential-free capability probing, canonical
+inspection/digest and same-UUID change detection, full copper/placement readback checks,
+atomic failure reporting, Edge.Cuts/courtyard/connector/antenna placement constraints,
+selective DRC preview semantics, pin-addressed no-connect resolution, and the KiCad 10
+ratsnest fallback. The isolated pinned runtime also passed candidate routing, differential and
+plane fixture regressions, live additive-track promotion, and live constrained-placement
+save/reopen/readback on disposable copies.
+
+The remaining live gates are intentionally still open: the pinned MCP surface does not provide
+a safe exact-track identity/restore primitive after a successful save, does not expose a
+verified schematic-save/revision endpoint, and exposes only an unsafe all-violations exclusion
+writer. The routing MCP transport remains a separate read-only candidate service; a host
+coordinator for saved-source staging and automatic live promotion has not been advertised.
+Those capabilities fail closed rather than being represented as successful mutations. The
+exact evidence for this checkpoint is archived in `docs/IMPLEMENTED_FIXES.md`.

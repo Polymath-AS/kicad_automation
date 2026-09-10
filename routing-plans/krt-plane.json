@@ -1,5 +1,6 @@
 {
   "project": "tests/fixtures/krt-plane/krt-plane.kicad_pcb",
+  "schema_version": 1,
   "timeout_seconds": 600,
   "steps": [
     {

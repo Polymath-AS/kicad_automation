@@ -2,6 +2,7 @@ import json
 import unittest
 
 from scripts.kicad_live_adapter import McpLiveAdapter, parse_pin_positions, parse_schematic_symbols
+from scripts.kicad_live_promotion import parse_live_tracks, parse_live_vias
 from scripts.kicad_contracts import DrcExclusionFilter
 
 
@@ -11,6 +12,27 @@ def response(text, *, error=False):
 
 
 class LiveAdapterTests(unittest.TestCase):
+    def test_structured_copper_readback_preserves_full_precision_net_and_via(self):
+        tracks = {"result": {"content": [{"text": json.dumps({"tracks": [
+            {"uuid": "11111111-1111-1111-1111-111111111111",
+             "start": {"x_mm": 1.234567, "y_mm": 3.456789}, "end": {"x_mm": 2.345678, "y_mm": 4.5},
+             "layer": "F.Cu", "width_mm": 0.2, "net": "POWER 12V"}
+        ]})}]}}
+        vias = {"result": {"content": [{"text": json.dumps({"vias": [
+            {"uuid": "22222222-2222-2222-2222-222222222222", "position": {"x_mm": 2.5, "y_mm": 3.5},
+             "net": "GND", "layers": ["F.Cu", "B.Cu"], "diameter_mm": 0.6, "drill_mm": 0.3}
+        ]})}]}}
+        parsed_track = parse_live_tracks(tracks)[0]
+        self.assertEqual(parsed_track["net"], "POWER 12V")
+        self.assertAlmostEqual(parsed_track["start"]["x_mm"], 1.234567)
+        parsed_via = parse_live_vias(vias)[0]
+        self.assertEqual(parsed_via["drill_mm"], 0.3)
+
+    def test_text_track_parser_drops_display_id_from_net_name(self):
+        response = {"result": {"content": [{"text":
+            "1. (30.00, 30.00) -> (70.00, 30.00) mm layer=BL_F_Cu "
+            "width=0.250 mm net=POWER 12V id=9b94c8a0..."}]}}
+        self.assertEqual(parse_live_tracks(response)[0]["net"], "POWER 12V")
     def test_symbol_and_pin_parsers_preserve_named_usb_shield_pin(self):
         symbols = parse_schematic_symbols(response(
             "Symbols (1 total):\n- J1 USB Connector:USB_C_Receptacle_USB2.0_16P @ (10.00, 20.00) rot=0 unit=1"
@@ -43,6 +65,8 @@ class LiveAdapterTests(unittest.TestCase):
         result = McpLiveAdapter(call).add_no_connect_by_pin("J1", "SH")
         self.assertEqual(result["status"], "success")
         self.assertEqual(result["resolved_pin"]["canonical_pin"], "SH")
+        self.assertFalse(result["saved"])
+        self.assertTrue(result["dirty"])
         add_call = next(item for item in calls if item[0] == "sch_add_no_connect")
         self.assertEqual(add_call[1], {"x_mm": 12.5, "y_mm": 23.5, "snap_to_grid": False})
         self.assertEqual(result["erc"]["removed_finding_ids"], ["shield-not-connected"])

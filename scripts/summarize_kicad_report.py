@@ -25,15 +25,15 @@ REFERENCE_PATTERNS = (
 def collect_findings(report: dict[str, Any]) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     for category in ("violations", "unconnected_items", "schematic_parity"):
-        for index, finding in enumerate(report.get(category, []) or []):
+        for finding in report.get(category, []) or []:
             item = {**finding, "category": category}
             item.setdefault(
                 "uuid",
-                stable_uuid("violation", {"category": category, "index": index, **finding}),
+                stable_uuid("violation", {"category": category, **finding}),
             )
             findings.append(item)
     for sheet in report.get("sheets", []) or []:
-        for index, finding in enumerate(sheet.get("violations", []) or []):
+        for finding in sheet.get("violations", []) or []:
             findings.append(
                 {
                     **finding,
@@ -43,7 +43,7 @@ def collect_findings(report: dict[str, Any]) -> list[dict[str, Any]]:
                         "uuid",
                         stable_uuid(
                             "violation",
-                            {"sheet": sheet.get("path", ""), "index": index, **finding},
+                            {"sheet": sheet.get("path", ""), **finding},
                         ),
                     ),
                 }

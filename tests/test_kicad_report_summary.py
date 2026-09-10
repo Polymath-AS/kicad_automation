@@ -61,6 +61,13 @@ class KicadReportSummaryTests(unittest.TestCase):
         self.assertEqual(result["top_findings"][0]["sheet"], "/power")
         self.assertTrue(result["truncated"])
 
+    def test_derived_violation_id_does_not_depend_on_array_position(self):
+        a = {"type": "clearance", "description": "A", "items": []}
+        b = {"type": "clearance", "description": "B", "items": []}
+        first = {item["description"]: item["uuid"] for item in summary.collect_findings({"violations": [a, b]})}
+        second = {item["description"]: item["uuid"] for item in summary.collect_findings({"violations": [b, a]})}
+        self.assertEqual(first, second)
+
 
 if __name__ == "__main__":
     unittest.main()

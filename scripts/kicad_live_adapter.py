@@ -64,6 +64,13 @@ def _parse_text_result(response: Mapping[str, Any]) -> str:
 
 
 def _embedded_json(response: Mapping[str, Any]) -> Any:
+    result = response.get("result", response)
+    if isinstance(result, Mapping):
+        structured = result.get("structuredContent")
+        if isinstance(structured, Mapping):
+            value = structured.get("result", structured)
+            if isinstance(value, (Mapping, list)):
+                return value
     text = _parse_text_result(response)
     try:
         return json.loads(text)
@@ -121,6 +128,26 @@ def _finding_ids(value: Any) -> set[str]:
     return set()
 
 
+def _fallback_unconnected_records(value: Any) -> list[Mapping[str, Any]]:
+    """Normalize KiCad 10 get_unconnected_nets text/JSON into client records."""
+    if isinstance(value, Mapping):
+        for key in ("unconnected_nets", "nets", "endpoints", "items"):
+            records = value.get(key)
+            if isinstance(records, list):
+                return [item for item in records if isinstance(item, Mapping)]
+        return []
+    if isinstance(value, str):
+        records: list[Mapping[str, Any]] = []
+        for line in value.splitlines():
+            line = line.strip()
+            if not line.startswith("-"):
+                continue
+            text = line[1:].strip()
+            records.append({"description": text})
+        return records
+    return []
+
+
 class McpLiveAdapter:
     """High-level calls over the repository MCP client request function."""
 
@@ -128,9 +155,11 @@ class McpLiveAdapter:
         self,
         call: Callable[[str, Mapping[str, Any]], Mapping[str, Any]],
         revision: Callable[[], str] | None = None,
+        save: Callable[[], bool] | None = None,
     ):
         self._call = call
         self._revision = revision
+        self._save = save
 
     def call(self, name: str, arguments: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
         response = self._call(name, arguments or {})
@@ -142,6 +171,10 @@ class McpLiveAdapter:
     def checked_mutation(self, name: str, arguments: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
         """Reject domain refusals that upstream incorrectly returns as transport success."""
         response = self.call(name, arguments)
+        result = response.get("result", response)
+        structured = result.get("structuredContent") if isinstance(result, Mapping) else None
+        if isinstance(structured, Mapping) and structured.get("status") in {"failure", "partial"}:
+            raise LiveToolError(f"{name} returned domain status {structured.get('status')}: {structured}")
         text = _parse_text_result(response).casefold()
         refusal_markers = ("refusing", "refused", "aborted", "failed", "failure", "could not")
         if any(marker in text for marker in refusal_markers):
@@ -193,11 +226,19 @@ class McpLiveAdapter:
         })
         after = _embedded_json(self.call("run_erc", {"save_report": False})) if run_erc else None
         after_revision = self.current_revision()
+        saved = bool(self._save()) if self._save is not None else False
+        if self._save is not None and not saved:
+            return {
+                "status": "failure", "operation": "sch_add_no_connect", "saved": False,
+                "dirty": True, "document_revision": after_revision,
+                "resolved_pin": resolved,
+                "error": "schematic mutation was applied but its save postcondition failed",
+            }
         before_ids = _finding_ids(before)
         after_ids = _finding_ids(after)
         return {
-            "status": "success", "operation": "sch_add_no_connect", "saved": True,
-            "dirty": False, "document_revision": after_revision, "resolved_pin": resolved,
+            "status": "success", "operation": "sch_add_no_connect", "saved": saved,
+            "dirty": not saved, "document_revision": after_revision, "resolved_pin": resolved,
             "erc": {"before_finding_ids": sorted(before_ids), "after_finding_ids": sorted(after_ids),
                      "removed_finding_ids": sorted(before_ids - after_ids),
                      "unrelated_finding_ids": sorted(after_ids - before_ids)},
@@ -236,6 +277,7 @@ class McpLiveAdapter:
         endpoint_items: list[Mapping[str, Any]] = []
         if isinstance(drc_report.get("unconnected_items"), list):
             endpoint_items.extend(item for item in drc_report["unconnected_items"] if isinstance(item, Mapping))
+        endpoint_items.extend(_fallback_unconnected_records(unconnected))
         fallback = ratsnest_fallback(endpoint_items, drc_report)
         fallback["source_payload"] = {"get_unconnected_nets": unconnected, "run_drc": drc}
         fallback["native_message"] = native_text

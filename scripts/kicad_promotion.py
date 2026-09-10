@@ -23,12 +23,25 @@ except ImportError:  # package import from repository root
     from scripts.kicad_contracts import DocumentState, OperationResult, stable_uuid
 
 
-def _jsonable(value: Any) -> Any:
+_ORDER_INSENSITIVE_KEYS = {
+    "tracks", "vias", "footprints", "pads", "shapes", "zones", "keepouts", "nets",
+    "items", "violations", "unconnected_items", "schematic_parity",
+}
+
+
+def _jsonable(value: Any, *, key: str | None = None) -> Any:
     """Canonicalise adapter data without relying on mapping insertion order."""
     if isinstance(value, Mapping):
-        return {str(key): _jsonable(item) for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))}
+        return {str(name): _jsonable(item, key=str(name))
+                for name, item in sorted(value.items(), key=lambda pair: str(pair[0]))}
     if isinstance(value, (list, tuple)):
-        return [_jsonable(item) for item in value]
+        normalized = [_jsonable(item) for item in value]
+        # IPC services do not promise collection order.  Canonicalize board
+        # object collections while preserving ordered geometry such as points
+        # within one polygon/track.
+        if key in _ORDER_INSENSITIVE_KEYS:
+            normalized.sort(key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")))
+        return normalized
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
@@ -69,6 +82,8 @@ def _via_signature(item: Mapping[str, Any]) -> tuple[Any, ...]:
         _point(item.get("position", item)),
         str(item.get("net", item.get("net_name", ""))),
         tuple(str(layer) for layer in item.get("layers", ()) or ()),
+        round(float(item.get("diameter", item.get("diameter_mm", 0.0)) or 0.0), 6),
+        round(float(item.get("drill", item.get("drill_mm", 0.0)) or 0.0), 6),
     )
 
 
@@ -80,6 +95,8 @@ class CopperDelta:
     add_vias: tuple[Mapping[str, Any], ...] = ()
     remove_uuids: tuple[str, ...] = ()
     changed_footprints: tuple[Mapping[str, Any], ...] = ()
+    changed_segments: tuple[Mapping[str, Any], ...] = ()
+    changed_vias: tuple[Mapping[str, Any], ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -87,6 +104,8 @@ class CopperDelta:
             "add_vias": [dict(item) for item in self.add_vias],
             "remove_uuids": list(self.remove_uuids),
             "changed_footprints": [dict(item) for item in self.changed_footprints],
+            "changed_segments": [dict(item) for item in self.changed_segments],
+            "changed_vias": [dict(item) for item in self.changed_vias],
         }
 
 
@@ -126,7 +145,15 @@ def geometry_delta(source: Mapping[str, Any], candidate: Mapping[str, Any]) -> C
         if isinstance(item, Mapping)
     }
     add = tuple(item for ident, item in candidate_tracks.items() if ident not in source_tracks)
+    changed_segments = tuple(
+        candidate_tracks[ident] for ident in source_tracks.keys() & candidate_tracks.keys()
+        if _track_signature(source_tracks[ident]) != _track_signature(candidate_tracks[ident])
+    )
     add_vias = tuple(item for ident, item in candidate_vias.items() if ident not in source_vias)
+    changed_vias = tuple(
+        candidate_vias[ident] for ident in source_vias.keys() & candidate_vias.keys()
+        if _via_signature(source_vias[ident]) != _via_signature(candidate_vias[ident])
+    )
     removed = tuple(ident for ident in source_tracks if ident not in candidate_tracks)
     removed += tuple(ident for ident in source_vias if ident not in candidate_vias)
 
@@ -149,7 +176,7 @@ def geometry_delta(source: Mapping[str, Any], candidate: Mapping[str, Any]) -> C
             or candidate_fp[ident].get("rotation") != source_fp[ident].get("rotation")
         )
     )
-    return CopperDelta(add, add_vias, removed, changed)
+    return CopperDelta(add, add_vias, removed, changed, changed_segments, changed_vias)
 
 
 def _verify_copper_readback(
@@ -168,18 +195,41 @@ def _verify_copper_readback(
         for item in readback.get("vias", ()) or ()
         if isinstance(item, Mapping)
     }
-    for item in delta.add_segments:
-        ident = _object_id("track", item)
-        if ident not in actual_tracks:
-            return False, f"promoted track {ident} was not present after reopen"
-        expected_net = item.get("net", item.get("net_name"))
-        actual_net = actual_tracks[ident].get("net", actual_tracks[ident].get("net_name"))
-        if expected_net is not None and str(expected_net) != str(actual_net):
-            return False, f"promoted track {ident} changed net identity"
-    for item in delta.add_vias:
-        ident = _object_id("via", item)
-        if ident not in actual_vias:
-            return False, f"promoted via {ident} was not present after reopen"
+    def track_matches(expected: Mapping[str, Any], actual: Mapping[str, Any]) -> bool:
+        return _track_signature(expected)[1:] == _track_signature(actual)[1:]
+
+    def via_matches(expected: Mapping[str, Any], actual: Mapping[str, Any]) -> bool:
+        return _via_signature(expected)[1:] == _via_signature(actual)[1:]
+
+    expected_tracks = [item for item in candidate.get("tracks", ()) if isinstance(item, Mapping)]
+    actual_track_values = [item for item in readback.get("tracks", ()) if isinstance(item, Mapping)]
+    used_tracks: set[int] = set()
+    for expected in expected_tracks:
+        ident = _object_id("track", expected)
+        candidates = [(index, item) for index, item in enumerate(actual_track_values)
+                      if _object_id("track", item) == ident] or list(enumerate(actual_track_values))
+        match_index = next((index for index, item in candidates
+                            if index not in used_tracks and track_matches(expected, item)), None)
+        if match_index is None:
+            return False, f"track {ident} geometry/net did not survive reopen"
+        used_tracks.add(match_index)
+    if len(used_tracks) != len(actual_track_values):
+        return False, "reopened document contains unexpected extra tracks"
+
+    expected_vias = [item for item in candidate.get("vias", ()) if isinstance(item, Mapping)]
+    actual_via_values = [item for item in readback.get("vias", ()) if isinstance(item, Mapping)]
+    used_vias: set[int] = set()
+    for expected in expected_vias:
+        ident = _object_id("via", expected)
+        candidates = [(index, item) for index, item in enumerate(actual_via_values)
+                      if _object_id("via", item) == ident] or list(enumerate(actual_via_values))
+        match_index = next((index for index, item in candidates
+                            if index not in used_vias and via_matches(expected, item)), None)
+        if match_index is None:
+            return False, f"via {ident} geometry/net did not survive reopen"
+        used_vias.add(match_index)
+    if len(used_vias) != len(actual_via_values):
+        return False, "reopened document contains unexpected extra vias"
     return True, None
 
 
@@ -217,12 +267,17 @@ class TransactionalPromotion:
         *,
         delta: Any = None,
         effects: Mapping[str, Any] | None = None,
+        status: str = "failure",
     ) -> dict[str, Any]:
         payload = dict(effects or {})
         if delta is not None:
             payload.setdefault("delta", delta.as_dict() if hasattr(delta, "as_dict") else deepcopy(delta))
-        return OperationResult("failure", self.operation, self.state,
-                               verified_effects=payload, error=error).as_dict()
+        return OperationResult(
+            status, self.operation, self.state, verified_effects=payload, error=error,
+            retryable=not payload.get("recovery_required", False),
+            rollback_attempted=payload.get("rollback_attempted"),
+            rollback_verified=payload.get("rollback_verified"),
+        ).as_dict()
 
     def promote(
         self,
@@ -253,12 +308,15 @@ class TransactionalPromotion:
             return self._failure("source document changed since candidate routing/placement")
 
         before = self.snapshot()
-        mutated = False
+        # Mark mutation as possible before entering the adapter.  An IPC call
+        # can mutate one object and then raise while processing the next one.
+        mutation_started = True
+        saved = False
         try:
             effects = self.apply(delta) or {}
-            mutated = True
             if not self.save():
                 raise RuntimeError("save postcondition failed")
+            saved = True
             self.reopen()
             readback = deepcopy(self.read_document())
             matches, reason = self.verify_readback(candidate, readback, delta)
@@ -281,7 +339,8 @@ class TransactionalPromotion:
         except Exception as exc:
             rollback_verified = False
             rollback_error: str | None = None
-            if mutated:
+            rollback_attempted = mutation_started
+            if mutation_started:
                 try:
                     self.restore(before)
                     if not self.save():
@@ -295,13 +354,17 @@ class TransactionalPromotion:
                     rollback_error = str(rollback_exc)
             payload: dict[str, Any] = {
                 "delta": delta.as_dict() if hasattr(delta, "as_dict") else deepcopy(delta),
-                "rolled_back": mutated,
+                "rollback_attempted": rollback_attempted,
+                "rolled_back": rollback_attempted,
                 "rollback_verified": rollback_verified,
+                "recovery_required": not rollback_verified,
+                "saved_before_failure": saved,
                 "source_digest": source_hash,
             }
             if rollback_error:
                 payload["rollback_error"] = rollback_error
-            return self._failure(str(exc), effects=payload)
+            return self._failure(str(exc), effects=payload,
+                                 status="failure" if rollback_verified else "partial")
 
 
 class LivePromotion:
@@ -358,6 +421,11 @@ class LivePromotion:
                 "candidate removes existing copper; explicit reviewed removal is required",
                 delta=delta,
             )
+        if delta.changed_segments or delta.changed_vias:
+            return self._transaction._failure(
+                "candidate updates existing copper with unchanged UUIDs; exact live update is unsupported",
+                delta=delta,
+            )
         return self._transaction.promote(
             candidate,
             delta,
@@ -380,10 +448,14 @@ def placement_delta(source: Mapping[str, Any], candidate: Mapping[str, Any]) -> 
         old = source_items[ident]
         old_pos = _point(old.get("position", old))
         new_pos = _point(item.get("position", item))
-        if old_pos != new_pos or old.get("rotation") != item.get("rotation"):
-            changed.append({"uuid": ident, "reference": item.get("reference"),
-                            "position": item.get("position", item),
-                            "rotation": item.get("rotation") or 0.0})
+        if old_pos != new_pos or old.get("rotation") != item.get("rotation") or old.get("layer") != item.get("layer"):
+            change = {"uuid": ident, "reference": item.get("reference"),
+                      "position": item.get("position", item)}
+            if "rotation" in item:
+                change["rotation"] = item["rotation"]
+            if "layer" in item:
+                change["layer"] = item["layer"]
+            changed.append(change)
     return {"changed_footprints": changed}
 
 
@@ -399,6 +471,10 @@ def _verify_placement_readback(
         got = actual.get(ident)
         if got is None or _point(got.get("position", got)) != _point(expected.get("position", expected)):
             return False, f"footprint {ident} did not survive reopen at the promoted position"
+        if "rotation" in expected and got.get("rotation") != expected.get("rotation"):
+            return False, f"footprint {ident} did not preserve rotation after reopen"
+        if "layer" in expected and got.get("layer") != expected.get("layer"):
+            return False, f"footprint {ident} did not preserve layer after reopen"
     return True, None
 
 

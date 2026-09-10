@@ -16,7 +16,7 @@ import subprocess
 import sys
 import time
 import uuid
-from typing import Literal, NotRequired, TypedDict
+from typing import Literal, Mapping, NotRequired, TypedDict
 
 try:
     from kicad_contracts import with_stable_uuid
@@ -45,6 +45,15 @@ NUMBERS = {"track_width": (0.05, 10), "clearance": (0.05, 10),
            "diff_pair_gap": (0.05, 10), "impedance": (1, 1000),
            "coplanar_gap": (0.05, 10), "zone_clearance": (0.05, 10),
            "gnd_via_distance": (0.1, 100), "length_match_tolerance": (0.01, 100)}
+POLICY_NUMBERS = {
+    "max_iterations": (1, 10_000_000), "max_probe_iterations": (1, 10_000_000),
+    "same_net_pad_clearance": (-1, 10), "routing_clearance_margin": (1, 3),
+    "hole_to_hole_clearance": (0, 10), "board_edge_clearance": (0, 10),
+}
+POLICY_BOOLEANS = {"strict_sizes", "no_fix_drc_settings", "force_reroute",
+                   "rip_existing_nets", "keep_input_copper"}
+FAB_TIERS = {"standard", "advanced", "auto"}
+ESCALATIONS = {"off", "board", "fab"}
 DIFF_ONLY = {"diff_pair_gap", "impedance", "coplanar_gap", "diff_pair_intra_match", "length_match_tolerance"}
 PLANE_ONLY = {"zone_clearance", "power_nets", "power_nets_widths", "stitch_vias",
               "add_gnd_vias", "gnd_via_net", "gnd_via_distance"}
@@ -72,12 +81,26 @@ class RoutingStep(TypedDict):
     gnd_via_net: NotRequired[str]
     gnd_via_distance: NotRequired[float]
     length_match_tolerance: NotRequired[float]
+    max_iterations: NotRequired[int]
+    max_probe_iterations: NotRequired[int]
+    fab_tier: NotRequired[Literal["standard", "advanced", "auto"]]
+    escalation: NotRequired[Literal["off", "board", "fab"]]
+    strict_sizes: NotRequired[bool]
+    no_fix_drc_settings: NotRequired[bool]
+    force_reroute: NotRequired[bool]
+    rip_existing_nets: NotRequired[bool]
+    keep_input_copper: NotRequired[bool]
+    same_net_pad_clearance: NotRequired[float]
+    routing_clearance_margin: NotRequired[float]
+    hole_to_hole_clearance: NotRequired[float]
+    board_edge_clearance: NotRequired[float]
 
 
 class RoutingPlan(TypedDict):
     project: str
     steps: list[RoutingStep]
     timeout_seconds: NotRequired[int]
+    schema_version: NotRequired[int]
 
 
 # Preserve strict plan validation at the MCP/Pydantic boundary too.
@@ -107,8 +130,11 @@ def normalize_layer(value: str) -> str:
 
 
 def validate_plan(plan: dict) -> dict:
-    if not isinstance(plan, dict) or set(plan) - {"project", "steps", "timeout_seconds"}:
-        raise ValueError("plan accepts project, steps, timeout_seconds only")
+    if not isinstance(plan, dict) or set(plan) - {"project", "steps", "timeout_seconds", "schema_version"}:
+        raise ValueError("plan accepts project, steps, timeout_seconds, schema_version only")
+    schema_version = plan.get("schema_version", 1)
+    if type(schema_version) is not int or schema_version not in (1, 2):
+        raise ValueError("schema_version must be 1 or 2")
     if not isinstance(plan.get("project"), str):
         raise ValueError("project must be a relative .kicad_pcb path")
     timeout = plan.get("timeout_seconds", 600)
@@ -119,8 +145,9 @@ def validate_plan(plan: dict) -> dict:
         raise ValueError("steps must contain 1..8 routing operations")
     normalized = []
     for step in steps:
-        allowed = {"operation", "nets", "layers", *NUMBERS, "power_nets", "power_nets_widths",
-                   *BOOL_OPTIONS, "gnd_via_net"}
+        allowed = {"operation", "nets", "layers", *NUMBERS, *POLICY_NUMBERS,
+                   "power_nets", "power_nets_widths", *BOOL_OPTIONS, *POLICY_BOOLEANS,
+                   "gnd_via_net", "fab_tier", "escalation"}
         if not isinstance(step, dict) or set(step) - allowed:
             raise ValueError("unknown step option; arbitrary upstream arguments are not accepted")
         operation = step.get("operation")
@@ -147,6 +174,31 @@ def validate_plan(plan: dict) -> dict:
                 if type(value) not in (int, float) or not math.isfinite(value) or not low <= value <= high:
                     raise ValueError(f"{name} must be between {low} and {high} mm")
                 clean[name] = value
+        for name, (low, high) in POLICY_NUMBERS.items():
+            if name in step:
+                value = step[name]
+                if type(value) not in (int, float) or not math.isfinite(value) or not low <= value <= high:
+                    raise ValueError(f"{name} must be between {low} and {high}")
+                if name in {"max_iterations", "max_probe_iterations"} and type(value) is not int:
+                    raise ValueError(f"{name} must be an integer")
+                clean[name] = value
+        if "max_probe_iterations" in clean and "max_iterations" in clean and clean["max_probe_iterations"] > clean["max_iterations"]:
+            raise ValueError("max_probe_iterations cannot exceed max_iterations")
+        if "fab_tier" in step:
+            if step["fab_tier"] not in FAB_TIERS:
+                raise ValueError("fab_tier must be standard, advanced, or auto")
+            clean["fab_tier"] = step["fab_tier"]
+        if "escalation" in step:
+            if step["escalation"] not in ESCALATIONS:
+                raise ValueError("escalation must be off, board, or fab")
+            clean["escalation"] = step["escalation"]
+        for name in POLICY_BOOLEANS:
+            if name in step:
+                if type(step[name]) is not bool:
+                    raise ValueError(f"{name} must be boolean")
+                clean[name] = step[name]
+        if clean.get("force_reroute") and clean.get("keep_input_copper"):
+            raise ValueError("force_reroute and keep_input_copper are conflicting policies")
         if "power_nets" in step:
             values = step["power_nets"]
             if not isinstance(values, list) or not values or any(not isinstance(v, str) or not v for v in values):
@@ -170,8 +222,21 @@ def validate_plan(plan: dict) -> dict:
             clean["gnd_via_net"] = step["gnd_via_net"]
         if clean.get("via_drill", 0) >= clean.get("via_size", 100):
             raise ValueError("via_drill must be smaller than via_size")
+        if schema_version == 2:
+            # Explicit safe defaults: a candidate may not silently relax the
+            # project contract or shrink a requested feature to rescue a run.
+            clean.setdefault("fab_tier", "standard")
+            clean.setdefault("escalation", "off")
+            clean.setdefault("strict_sizes", True)
+            clean.setdefault("no_fix_drc_settings", True)
+            clean.setdefault("max_iterations", 100_000)
+            clean.setdefault("max_probe_iterations", 10_000)
         normalized.append(clean)
-    return {"project": plan["project"], "steps": normalized, "timeout_seconds": timeout}
+    result = {"project": plan["project"], "steps": normalized, "timeout_seconds": timeout,
+              "schema_version": schema_version}
+    if schema_version == 1:
+        result["warnings"] = ["schema_version omitted or 1 uses legacy router defaults; use schema_version=2 for strict policy"]
+    return result
 
 
 def command(root: Path, step: dict, board: Path, output: Path) -> list[str]:
@@ -179,6 +244,13 @@ def command(root: Path, step: dict, board: Path, output: Path) -> list[str]:
             str(board), str(output), "--nets", *step["nets"],
             "--plane-layers" if step["operation"] == "planes" else "--layers", *step["layers"]]
     for name in NUMBERS:
+        if name in step:
+            args += ["--" + name.replace("_", "-"), str(step[name])]
+    for name in ("max_iterations", "max_probe_iterations", "same_net_pad_clearance",
+                 "routing_clearance_margin", "hole_to_hole_clearance", "board_edge_clearance"):
+        if name in step:
+            args += ["--" + name.replace("_", "-"), str(step[name])]
+    for name in ("fab_tier", "escalation"):
         if name in step:
             args += ["--" + name.replace("_", "-"), str(step[name])]
     if "power_nets" in step:
@@ -190,6 +262,10 @@ def command(root: Path, step: dict, board: Path, output: Path) -> list[str]:
     for name in BOOL_OPTIONS:
         if step.get(name):
             args.append("--" + name.replace("_", "-"))
+    for name in POLICY_BOOLEANS:
+        if name in step:
+            args.append("--" + name.replace("_", "-") if step[name] else
+                        "--no-" + name.replace("_", "-"))
     return args
 
 
@@ -211,6 +287,52 @@ def run_process(args: list[str], log: Path, timeout: int, cwd: Path) -> int:
                 proc.kill()
             proc.wait()
             raise TimeoutError(f"process timed out after {timeout}s; see {log}")
+
+
+def router_help_options(root: Path, operation: str) -> set[str]:
+    """Read the pinned parser's options in a credential-free environment."""
+    script = root / "py_router" / SCRIPTS[operation]
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(script), "--help"], cwd=root,
+            capture_output=True, text=True, timeout=30,
+            env={k: v for k, v in os.environ.items() if k in {
+                "PATH", "HOME", "TMPDIR", "TEMP", "TMP", "SYSTEMROOT", "LANG", "LC_ALL",
+                "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "PYTHONDONTWRITEBYTECODE", "LD_LIBRARY_PATH",
+            }},
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"could not inspect pinned {operation} router capabilities: {exc}") from exc
+    if proc.returncode != 0:
+        raise RuntimeError(f"pinned {operation} router --help failed ({proc.returncode})")
+    return set(re.findall(r"(?<![\w-])(--[a-z][a-z0-9-]*)", proc.stdout + proc.stderr))
+
+
+def policy_options_for_step(step: Mapping[str, Any]) -> set[str]:
+    names = {"max_iterations", "max_probe_iterations", "same_net_pad_clearance",
+             "routing_clearance_margin", "hole_to_hole_clearance", "board_edge_clearance",
+             "fab_tier", "escalation"}
+    names.update(name for name in POLICY_BOOLEANS if name in step)
+    return {"--" + name.replace("_", "-") for name in names if name in step}
+
+
+def metrics_from_log(path: Path) -> dict[str, Any]:
+    """Extract optional upstream metrics without turning missing values into zero."""
+    if not path.is_file():
+        return {"iterations": None, "probe_iterations": None, "relaxations": None, "scope": "unknown"}
+    for line in reversed(path.read_text(encoding="utf-8", errors="replace").splitlines()):
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and any(key in value for key in ("iterations", "probe_iterations", "relaxations")):
+            return {
+                "iterations": value.get("iterations"),
+                "probe_iterations": value.get("probe_iterations"),
+                "relaxations": value.get("relaxations"),
+                "scope": value.get("scope", "whole_job"),
+            }
+    return {"iterations": None, "probe_iterations": None, "relaxations": None, "scope": "unknown"}
 
 
 def findings(report: dict) -> list[dict]:
@@ -299,6 +421,9 @@ def doctor(root: Path) -> dict:
                 "dry_run": True,
                 "blocking_object_reports": True,
                 "live_ipc_promotion": False,
+                "strict_policy_controls": False,
+                "policy_capability_probe": True,
+                "saved_source_rollback": False,
             }}
 
 
@@ -325,6 +450,12 @@ def contract_hashes(directory: Path) -> dict:
 def run_job(plan: dict, workspace: Path, jobs: Path, root: Path) -> dict:
     plan = validate_plan(plan)
     provenance = doctor(root)
+    if plan.get("schema_version") == 2:
+        for step in plan["steps"]:
+            available = router_help_options(root, step["operation"])
+            missing = sorted(policy_options_for_step(step) - available)
+            if missing:
+                raise ValueError(f"pinned {step['operation']} router does not advertise policy options: {missing}")
     board = contained(workspace, plan["project"])
     if board.suffix != ".kicad_pcb":
         raise ValueError("project must name a .kicad_pcb file")
@@ -360,16 +491,24 @@ def run_job(plan: dict, workspace: Path, jobs: Path, root: Path) -> dict:
             output = stage_dir / board.name
             args = command(root, step, input_dir / board.name, output)
             entry = {"operation": step["operation"], "command": args,
-                     "log": str(job / f"step-{index:02d}.log")}
+                     "log": str(job / f"step-{index:02d}.log"),
+                     "policy": {key: step[key] for key in step if key in POLICY_NUMBERS or
+                                key in POLICY_BOOLEANS or key in {"fab_tier", "escalation"}}}
             result["steps"].append(entry)
             save()
             # Remove the copied board so a zero-exit/no-output tool cannot pass.
             output.unlink()
             entry["exit_code"] = run_process(args, Path(entry["log"]), plan["timeout_seconds"], stage_dir)
+            entry["metrics"] = metrics_from_log(Path(entry["log"]))
             if entry["exit_code"] != 0 or not output.is_file():
+                if entry["exit_code"] == 3:
+                    raise RuntimeError(f"routing step {index} rejected by strict fabrication policy; see {entry['log']}")
                 raise RuntimeError(f"routing step {index} failed or did not produce a board")
             restore_contract(baseline_dir, stage_dir)
             entry["validation"] = validate(output, job / f"step-{index:02d}-checks")
+            entry["comparison"] = regression(baseline, entry["validation"])
+            if entry["comparison"]["regressed"]:
+                raise RuntimeError(f"routing step {index} introduced validation regressions")
             current = output
             save()
         final = result["steps"][-1]["validation"]

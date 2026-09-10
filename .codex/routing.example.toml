@@ -6,4 +6,4 @@ args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/kicad-routin
 required = false
 startup_timeout_sec = 60
 tool_timeout_sec = 3600
-enabled_tools = ["routing_tools_info", "routing_run_candidate", "routing_job_result"]
+enabled_tools = ["routing_tools_info", "routing_run_candidate", "routing_plan_trace", "routing_job_result"]

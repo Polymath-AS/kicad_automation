@@ -177,8 +177,11 @@ implicitly.
 ## 5. MCP tool access
 
 After building, `.\tools\kicad-routing.cmd mcp` starts a stdio MCP server. Its JSON-RPC traffic is
-on stdin/stdout; Compose diagnostics go to stderr. Add `.codex/routing.example.toml` to the MCP
-client's project configuration and reload once. This does not require changing MCP Pro profiles.
+on stdin/stdout; Compose diagnostics go to stderr. The checked-in `.codex/config.toml` registers
+the optional routing server alongside the live KiCad server; `.codex/routing.example.toml` remains
+the minimal copyable fragment for another client. Installation may require one client catalog
+reload, but routine routing jobs do not require profile switching. If Docker or the coordinator
+is unavailable, routing tools remain discoverable with an explicit unavailable reason.
 
 1. `routing_tools_info()` reports backend/revision, source/output boundaries and whether topology
    preview, dry-run blocking reports and live promotion are available.
@@ -190,6 +193,18 @@ client's project configuration and reload once. This does not require changing M
 Calls are synchronous. Use the CLI for jobs longer than the client's timeout. Disconnecting is
 not proof of completion. A killed container may leave a `running` checkpoint; treat it as
 incomplete and start a new job. Automatic resume/cancellation is a later milestone.
+
+### Policy schema and capability probing
+
+Plans without `schema_version` retain legacy v1 argument behavior and return a deprecation warning.
+Schema v2 defaults each operation to `fab_tier=standard`, `escalation=off`,
+`strict_sizes=true`, `no_fix_drc_settings=true`, and bounded iteration budgets. It accepts only the
+typed policy fields listed in the remaining-fixes plan; unknown, nonfinite, conflicting or
+operation-incompatible values fail before staging. The adapter runs each pinned router's sanitized
+`--help` probe before a v2 job and refuses options that the installed parser does not advertise.
+Per-stage results retain logs, policy, optional iteration metrics (unknown is represented as null),
+contract hashes and regression comparisons. A strict fabrication-policy exit is reported as policy
+rejection, not as a successful candidate or an unclassified crash.
 
 ## Verification and reproduction
 
@@ -211,6 +226,15 @@ Verified 2026-09-10 using KiCad 10.0.4 and the pinned Rust engine:
   validation after mutations. Final live summary: 2 footprints, 2 nets (including empty net),
   0 tracks/vias/zones before batch routing. `pcb_save` confirmed success. The fixture service was
   stopped to release its lock before routing. The ESP32 project was not modified.
+
+Latest implementation verification also rebuilt both images after the transaction/parser changes,
+ran `routing doctor`, and passed the stdio MCP and differential/plane integration commands. A
+separate disposable KiCad service on port 3336 passed `tests/integration_live_promotion.py` and
+`tests/integration_live_placement.py`; after teardown/restart, `pcb_get_footprints` read J1 back at
+`(35.00, 30.00)`. The required disposable validation command returned ERC 0 but exit 1 for the
+fixture's expected four unrouted nets and two known footprint-symbol mismatch warnings. That is
+recorded as a design-result failure, not hidden as a clean DRC result. The user ESP32 service on
+3334 remained running and was not used for mutation.
 
 `scripts/build_routing_fixture.py` records the MCP creation procedure and refuses existing
 projects by default. The checked-in project triplet is sufficient for repeatable routing tests;

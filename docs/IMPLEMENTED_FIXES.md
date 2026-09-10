@@ -161,6 +161,9 @@ was not modified.
 - Upstream does not yet expose `{reference, pin}` directly or a live document revision field;
   `scripts/kicad_live_adapter.py` supplies the supported resolution boundary, explicit mm contract,
   ERC delta, and digest-based stale rejection. The pinned USB-C `J1.SH` path was live-tested.
+  Because the pinned surface has no independent schematic-save operation, the live adapter now
+  reports `dirty=true, saved=false` unless a verified save callback is supplied; it never claims
+  durability from the no-connect mutation alone.
 - Precise nested builder schemas and adapter save/revision semantics are implemented and covered;
   the upstream builder remains a file-backed tool with no independent schematic-save operation.
 - Complete live connector/module intent fixtures and live rotation/UUID parity remain open; the
@@ -178,7 +181,7 @@ was not modified.
 
 ## Current verification baseline
 
-- Python unit/contract suite: 62 tests passing, including candidate-routing, electrical controls,
+- Python unit/contract suite: 73 tests passing, including candidate-routing, electrical controls,
   live-adapter, and transactional routing/placement regressions.
 - Container build: `local/kicad-automation:10.0.4-mcp-pro` builds with the compatibility test.
 - Fixture validation: ERC clean, DRC clean, detailed reports persisted under
@@ -192,3 +195,32 @@ the post-mutation validator reported ERC 0 and only expected remaining fixture D
 disposable live-placement regression moved J1, saved it, reopened it through IPC, and a service
 restart read back the promoted position; its validator likewise reported ERC 0 and the fixture's
 expected unconnected/mismatch DRC findings.
+
+## Latest implementation checkpoint
+
+The current working tree additionally hardens the shared contracts: collection-order-independent
+semantic board digests; detection of same-UUID copper edits; full track/via geometry readback;
+rollback attempts that begin before an apply callback; explicit partial/recovery-required status
+when restoration cannot be verified; preflight rejection of unsupported live via/removal deltas;
+rotation/layer-preserving placement deltas; Edge.Cuts polygon/cutout checks; strict DRC selector
+AND semantics and report-bound previews; structured KiCad 10 track/via parsing; and schema-v2
+routing policy validation with credential-free parser capability probes and per-stage regression
+gates. The default Codex configuration now includes the optional candidate-routing MCP catalog,
+including `routing_plan_trace`.
+
+Verification run in this checkout: `python -m unittest discover -s tests -p 'test_*.py'` (73
+passing), `python -m compileall -q scripts tests` (pass), and `git diff --check` (pass). The
+pinned images built successfully. `tests/integration_routing_mcp.py` and
+`tests/integration_electrical_routing.py` passed in the routing image; isolated KiCad 10.0.4
+live routing and placement promotions passed on disposable copies, including placement readback
+after service restart. The disposable validation command returned ERC 0 and expected DRC
+violations (four intentionally unrouted fixture nets plus two known mismatch warnings), so that
+command is a design-result failure rather than an environment failure. Saved-source copper
+rollback remains blocked by the upstream KiCad 10 exact-track restore limitation.
+
+Exact runtime commands included `docker compose --project-directory . -f compose.yaml build kicad`,
+`docker compose --project-directory . -f compose.routing.yaml build routing`,
+`docker compose --project-directory . -f compose.routing.yaml run --rm -T --no-deps routing doctor`,
+and the two routing-image integration commands documented in the routing guide. The live checks
+used separate Compose projects on ports 3335/3336 with copied `krt-diff`/`krt-smoke` fixtures; the
+user's ESP32 service on port 3334 was not stopped, repointed or mutated.

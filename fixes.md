@@ -13,6 +13,34 @@ The ordered implementation plan for the remaining acceptance gaps is maintained 
 to `docs/IMPLEMENTED_FIXES.md` only after their acceptance checks have been rerun; `fixes.md`
 will then remain the active backlog rather than a second historical ledger.
 
+## Acceptance inventory
+
+The stable IDs below split the original acceptance criteria into independently verifiable
+work. `VERIFIED` means the recorded evidence meets the live/runtime contract; `PARTIAL` means
+the repository boundary is implemented but a required upstream/live capability is still open;
+`BLOCKED` means the pinned runtime cannot provide the required safe operation and the adapter
+fails closed.
+
+| ID | Status | Scope | Implementation/evidence |
+| --- | --- | --- | --- |
+| P0-TOOLS-01 | PARTIAL | One-session live + routing discovery | `scripts/kicad_contracts.py`, `.codex/config.toml`; routing remains a separate unavailable backend until a coordinator is connected. |
+| P0-TOOLS-02 | VERIFIED | Supported MCP client and SSE/JSON calls | `scripts/kicad_mcp_client.py`, `tests/test_mcp_client.py`. |
+| P0-ROUTE-01 | VERIFIED | KiCad 10 named-pad routing | M4 evidence in `docs/IMPLEMENTED_FIXES.md`; preserved this pass. |
+| P0-TOPO-01 | PARTIAL | Topology-aware dry run and atomic routing | `scripts/kicad_topology.py`, `tests/test_design_contracts.py`; live promotion rollback after save remains open. |
+| P0-REPORT-01 | VERIFIED | Persistent ERC/DRC artifacts | Docker validation/report fixtures and routing integration tests. |
+| P1-SCH-01 | PARTIAL | Pin-addressed no-connect and ERC units | `scripts/kicad_live_adapter.py`; pinned surface has no verified schematic-save callback. |
+| P1-SCHEMA-01 | PARTIAL | Precise nested builder contracts | `scripts/kicad_contracts.py`, `scripts/kicad_schematic.py`; live upstream builder remains file-backed. |
+| P1-STATE-01 | PARTIAL | Save/revision/stale-write semantics | Digest/stale rejection is implemented; durable upstream revision/save endpoint is absent. |
+| P1-PLACE-01 | PARTIAL | Constraint-aware placement | `scripts/kicad_placement.py`, `scripts/kicad_live_placement.py`; live rotation/UUID parity remains limited by inspection payload. |
+| P1-STATUS-01 | VERIFIED | Truthful structured operation status | `OperationResult`, live adapters, and transaction regressions. |
+| P1-RATS-01 | PARTIAL | KiCad 10 ratsnest fallback | `McpLiveAdapter.ratsnest()` consumes DRC/unconnected-net fallback; native endpoint remains unavailable. |
+| P2-EXCLUDE-01 | BLOCKED | Selective persisted DRC exclusions | Preview/selector contract is implemented; pinned writer is unsafe all-violations-only. |
+| P2-UUID-01 | PARTIAL | Stable native UUID exposure | Native IDs are preserved and truncated IDs are marked non-deletion-safe; complete live object pagination is not exposed. |
+| P2-PATH-01 | VERIFIED | Project destination/path semantics | `resolve_project_paths()` and Windows/relative path regressions in `tests/test_design_contracts.py`. |
+| P2-FOOTPRINT-01 | VERIFIED | Qualified footprint identity preservation | Version-scoped 3.34.0 patch and build-time compatibility regression. |
+| P2-API-01 | VERIFIED | Layer/status/result contract quality | Layer normalization, structured status envelopes, and refusal regressions in adapter/contract tests. |
+| M6-TRANSACTION-01 | PARTIAL | Live routing/placement promotion and rollback | Disposable live success/readback passes; saved-source copper rollback and coordinator remain open. |
+
 ## P0 — Blocks reliable board generation
 
 ### Provide one stable, complete MCP tool surface
@@ -93,6 +121,9 @@ math or file inspection.
 symbol and pin-position inspection, sends exact millimetre coordinates with snapping off, and
 reports the ERC finding delta. A disposable KiCad 10.0.4 USB-C fixture cleared only the `SH`
 finding and retained the other pin-not-connected findings after service restart.
+The adapter reports `saved=false, dirty=true` unless a verified schematic-save callback is
+supplied, because the pinned upstream surface has no independent schematic-save operation;
+durability remains open.
 
 ### Make schematic builder schemas match implementation
 
@@ -205,9 +236,12 @@ source and limitations.
   Repository-level transactional routing, dry-run blockers, rollback and constrained placement
   contracts are implemented and unit-tested. A disposable pinned KiCad 10 live promotion now
   covers candidate application, save, `pcb_revert` reopen, readback, net identity, and structured
-  success; live constrained-placement promotion now also covers save/reopen/readback. Saved-source
-  rollback for a copper delta remains open because the pinned live surface does not expose a safe
-  exact-track identity/restore primitive.
+  success; live constrained-placement promotion now also covers save/reopen/readback. Shared
+  transactions now detect same-UUID edits, preflight unsupported vias/removals before the first
+  live write, verify full track/via geometry, preserve placement rotation/layer, and report
+  partial/recovery-required status when rollback cannot be verified. Saved-source rollback for a
+  copper delta remains open because the pinned live surface does not expose a safe exact-track
+  identity/restore primitive.
   See
   [remaining-fixes implementation plan](docs/REMAINING_FIXES_PLAN.md) and the
   [routing architecture guide](docs/KICAD_ROUTING_TOOLS.md).

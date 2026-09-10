@@ -20,7 +20,7 @@ from scripts.kicad_contracts import (
 )
 from scripts.kicad_placement import PlacementRequest, apply_placement
 from scripts.kicad_placement import promote_placement_candidate
-from scripts.kicad_promotion import LivePromotion, board_digest
+from scripts.kicad_promotion import LivePromotion, TransactionalPromotion, board_digest, geometry_delta, placement_delta
 from scripts.kicad_schematic import NoConnectRequest, add_no_connect, build_circuit, no_connect_pin_input
 from scripts.kicad_topology import RouteRequest, TransactionalRouter
 from scripts.pad_to_pad_regression import resolve_pad, route_arguments
@@ -53,6 +53,51 @@ class DesignContractTests(unittest.TestCase):
         self.assertEqual(result["status"], "failure")
         self.assertEqual(store.document, {"value": 1})
         self.assertEqual(store.state.document_revision, 0)
+
+    def test_board_digest_is_collection_order_insensitive(self):
+        first = {"tracks": [{"uuid": "a", "start": {"x": 1}}, {"uuid": "b", "start": {"x": 2}}]}
+        second = {"tracks": list(reversed(first["tracks"]))}
+        self.assertEqual(board_digest(first), board_digest(second))
+
+    def test_same_uuid_copper_edit_is_detected_before_promotion(self):
+        source = {"tracks": [{"uuid": "t1", "start": {"x_mm": 1, "y_mm": 1},
+                              "end": {"x_mm": 2, "y_mm": 1}, "layer": "F.Cu",
+                              "net": "N", "width_mm": 0.2}]}
+        candidate = copy.deepcopy(source)
+        candidate["tracks"][0]["width_mm"] = 0.3
+        delta = geometry_delta(source, candidate)
+        self.assertEqual([item["uuid"] for item in delta.changed_segments], ["t1"])
+
+    def test_apply_exception_after_first_write_attempts_rollback(self):
+        board = {"tracks": []}
+        saved = copy.deepcopy(board)
+        def read(): return board
+        def snapshot(): return copy.deepcopy(board)
+        def apply(_delta):
+            board["tracks"].append({"uuid": "t1"})
+            raise RuntimeError("second object failed")
+        def restore(old): board.clear(); board.update(copy.deepcopy(old))
+        def save(): saved.clear(); saved.update(copy.deepcopy(board)); return True
+        def reopen(): board.clear(); board.update(copy.deepcopy(saved))
+        result = TransactionalPromotion(
+            read_document=read, snapshot=snapshot, apply=apply, restore=restore,
+            save=save, reopen=reopen, validate=lambda: True,
+            verify_readback=lambda *_: (True, None), operation="routing_promote",
+        ).promote({}, object())
+        self.assertEqual(result["status"], "failure")
+        self.assertTrue(result["verified_effects"]["rollback_attempted"])
+        self.assertTrue(result["verified_effects"]["rollback_verified"])
+        self.assertEqual(board, {"tracks": []})
+
+    def test_placement_delta_preserves_rotation_and_layer(self):
+        source = {"footprints": [{"uuid": "f1", "reference": "J1",
+                                   "position": {"x_mm": 1, "y_mm": 1},
+                                   "rotation": 90, "layer": "F.Cu"}]}
+        candidate = copy.deepcopy(source)
+        candidate["footprints"][0]["position"] = {"x_mm": 2, "y_mm": 1}
+        candidate["footprints"][0]["rotation"] = 180
+        delta = placement_delta(source, candidate)
+        self.assertEqual(delta["changed_footprints"][0]["rotation"], 180)
 
     def test_topology_dry_run_and_atomic_impossible_route(self):
         board = {"bounds": {"left": 0, "bottom": 0, "right": 20, "top": 20},
@@ -176,6 +221,17 @@ class DesignContractTests(unittest.TestCase):
                 findings, DrcExclusionFilter(uuids=frozenset({"u2"})), preview=preview,
                 add_exclusions=lambda ids: {"stored": ids},
             )
+
+    def test_drc_selector_categories_narrow_with_and_semantics(self):
+        findings = [
+            {"uuid": "u1", "type": "clearance", "rule": "r1", "references": ["J1"]},
+            {"uuid": "u2", "type": "clearance", "rule": "r2", "references": ["J2"]},
+        ]
+        preview = select_drc_violations(
+            findings, DrcExclusionFilter(rules=frozenset({"r1"}), types=frozenset({"clearance"}),
+                                          references=frozenset({"J1"})),
+        )
+        self.assertEqual(preview["excluded_uuids"], ["u1"])
 
     def test_drc_exclusion_save_failure_restores_snapshot(self):
         findings = [{"uuid": "u1", "type": "clearance"}]

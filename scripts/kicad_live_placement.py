@@ -25,8 +25,11 @@ except ImportError:
 _FOOTPRINT_RE = re.compile(
     r"^-\s+(?P<reference>\S+)\s+\([^)]*\)\s+@\s+"
     r"\((?P<x>-?\d+(?:\.\d+)?),\s*(?P<y>-?\d+(?:\.\d+)?)\)\s+mm"
-    r"(?:\s+layer=(?P<layer>\S+))?(?:\s+id=(?P<uuid>\S+))?"
+    r"(?:\s+layer=(?P<layer>\S+))?(?:\s+(?:rot|rotation)=(?P<rotation>-?\d+(?:\.\d+)?))?"
+    r"(?:\s+id=(?P<uuid>\S+))?"
 )
+
+_FULL_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 
 def parse_live_footprints(response: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -41,9 +44,17 @@ def parse_live_footprints(response: Mapping[str, Any]) -> list[dict[str, Any]]:
             "position": {"x_mm": float(match.group("x")), "y_mm": float(match.group("y"))},
         }
         if match.group("uuid"):
-            item["uuid"] = match.group("uuid")
+            # A display-truncated ID (for example ``681681d4...``) is not a
+            # safe native deletion/mutation identity.
+            if _FULL_UUID_RE.fullmatch(match.group("uuid")):
+                item["uuid"] = match.group("uuid")
+                item["uuid_source"] = "native"
+            else:
+                item["uuid_display"] = match.group("uuid")
         if match.group("layer"):
             item["layer"] = match.group("layer")
+        if match.group("rotation") is not None:
+            item["rotation"] = float(match.group("rotation"))
         footprints.append(item)
     return footprints
 
@@ -71,7 +82,12 @@ def _drc_violations(value: Any) -> list[Mapping[str, Any]]:
 def _drc_signature(value: Any) -> Counter[tuple[str, str, str, tuple[str, ...]]]:
     """Compare DRC identity, not coordinates that legitimately move with a footprint."""
     signature: Counter[tuple[str, str, str, tuple[str, ...]]] = Counter()
+    seen: set[str] = set()
     for violation in _drc_violations(value):
+        fingerprint = repr(sorted((str(key), repr(val)) for key, val in violation.items()))
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
         references = violation.get("references", ())
         if isinstance(references, str):
             references = (references,)
@@ -107,7 +123,7 @@ class McpPlacementPromotion:
                 "reference": change.get("reference"),
                 "x_mm": position.get("x_mm", position.get("x")),
                 "y_mm": position.get("y_mm", position.get("y")),
-                "rotation_deg": change.get("rotation", 0.0),
+                **({"rotation_deg": change["rotation"]} if "rotation" in change else {}),
             })
             moved += 1
         return {"moved_footprints": moved}
@@ -115,12 +131,14 @@ class McpPlacementPromotion:
     def restore(self, snapshot: Mapping[str, Any]) -> None:
         for item in snapshot.get("footprints", ()):
             position = item.get("position", item)
-            self.adapter.checked_mutation("pcb_move_footprint", {
+            arguments = {
                 "reference": item.get("reference"),
                 "x_mm": position.get("x_mm", position.get("x")),
                 "y_mm": position.get("y_mm", position.get("y")),
-                "rotation_deg": item.get("rotation", 0.0),
-            })
+            }
+            if "rotation" in item:
+                arguments["rotation_deg"] = item["rotation"]
+            self.adapter.checked_mutation("pcb_move_footprint", arguments)
 
     def save(self) -> bool:
         text = _parse_text_result(self.adapter.checked_mutation("pcb_save"))
@@ -135,9 +153,14 @@ class McpPlacementPromotion:
         result = response.get("result", response)
         if isinstance(result, Mapping) and result.get("isError"):
             return False
+        payload = _embedded_json(response)
+        current = _drc_signature(payload)
+        if not current and not (isinstance(payload, Mapping) and any(
+            key in payload for key in ("violations", "metadata", "evidence")
+        )):
+            return False
         if baseline is None:
             return True
-        current = _drc_signature(_embedded_json(response))
         # Existing findings are allowed; a new identity or increased count is not.
         return all(current[key] <= baseline[key] for key in current)
 

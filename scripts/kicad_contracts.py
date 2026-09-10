@@ -20,7 +20,8 @@ from typing import Any, Callable, Iterable, Literal, Mapping
 import uuid
 
 
-Backend = Literal["live_ipc", "file_backed", "cli", "unavailable"]
+Backend = Literal["live_ipc", "file_backed", "cli", "routing_candidate",
+                  "transactional_promotion", "unavailable"]
 OperationStatus = Literal["success", "partial", "failure"]
 
 
@@ -90,6 +91,21 @@ STABLE_TOOL_CATALOG: tuple[ToolMetadata, ...] = (
     ToolMetadata("run_erc", "cli", True),
     ToolMetadata("run_drc", "cli", True),
     ToolMetadata("get_unconnected_nets", "live_ipc", True),
+    # The routing service is a separate, isolated MCP transport.  Keep these
+    # names in the stable catalog even when Docker is unavailable; discovery
+    # must not depend on write permission or profile switching.
+    ToolMetadata("routing_tools_info", "routing_candidate", False, False,
+                 "routing service is not connected", False),
+    ToolMetadata("routing_run_candidate", "routing_candidate", False, False,
+                 "routing candidate service is not connected", False),
+    ToolMetadata("routing_plan_trace", "routing_candidate", False, False,
+                 "routing candidate service is not connected", False),
+    ToolMetadata("routing_job_result", "routing_candidate", False, False,
+                 "routing candidate service is not connected", False),
+    ToolMetadata("routing_preview_promotion", "transactional_promotion", False, False,
+                 "live promotion coordinator is not connected", False),
+    ToolMetadata("routing_promote_candidate", "transactional_promotion", False, False,
+                 "live promotion coordinator is not connected", False),
 )
 
 
@@ -102,7 +118,8 @@ def stable_tool_catalog(
     operating_mode: str = "write",
 ) -> list[dict[str, Any]]:
     """Return every supported tool with stable backend/availability metadata."""
-    enabled = {"live_ipc": live_ipc, "file_backed": file_backed, "cli": cli}
+    enabled = {"live_ipc": live_ipc, "file_backed": file_backed, "cli": cli,
+               "routing_candidate": False, "transactional_promotion": False}
     result: list[dict[str, Any]] = []
     for tool in STABLE_TOOL_CATALOG:
         available = (tool.available and enabled.get(tool.backend, False)
@@ -188,6 +205,9 @@ class OperationResult:
     backend: Backend = "live_ipc"
     blockers: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
+    retryable: bool | None = None
+    rollback_attempted: bool | None = None
+    rollback_verified: bool | None = None
 
     @property
     def success(self) -> bool:
@@ -216,6 +236,12 @@ class OperationResult:
             result["blockers"] = deepcopy(self.blockers)
         if self.error:
             result["error"] = self.error
+        if self.retryable is not None:
+            result["retryable"] = self.retryable
+        if self.rollback_attempted is not None:
+            result["rollback_attempted"] = self.rollback_attempted
+        if self.rollback_verified is not None:
+            result["rollback_verified"] = self.rollback_verified
         return result
 
 
@@ -228,6 +254,9 @@ def operation_result(
     backend: Backend = "live_ipc",
     blockers: Iterable[Mapping[str, Any]] = (),
     error: str | None = None,
+    retryable: bool | None = None,
+    rollback_attempted: bool | None = None,
+    rollback_verified: bool | None = None,
 ) -> dict[str, Any]:
     return OperationResult(
         status=status,
@@ -237,6 +266,9 @@ def operation_result(
         backend=backend,
         blockers=[dict(item) for item in blockers],
         error=error,
+        retryable=retryable,
+        rollback_attempted=rollback_attempted,
+        rollback_verified=rollback_verified,
     ).as_dict()
 
 
@@ -355,14 +387,26 @@ def stable_uuid(kind: str, identity: str | Mapping[str, Any]) -> str:
 
 def with_stable_uuid(kind: str, item: Mapping[str, Any], *, identity: str | None = None) -> dict[str, Any]:
     result = dict(item)
-    if result.get("uuid"):
+    if result.get("uuid") and "..." not in str(result["uuid"]):
         result.setdefault("uuid_source", "native")
-    elif result.get("id"):
+    elif result.get("uuid"):
+        result["uuid_display"] = str(result.pop("uuid"))
+        identity = identity or json.dumps(result, sort_keys=True, separators=(",", ":"))
+        result["uuid"] = stable_uuid(kind, identity)
+        result["uuid_source"] = "derived"
+        result["deletion_safe"] = False
+    elif result.get("id") and "..." not in str(result["id"]):
         # Some KiCad inspection surfaces call the native identity ``id``.
         # Preserve it verbatim instead of hashing an array position or object
         # representation into a replacement UUID.
         result["uuid"] = str(result["id"])
         result["uuid_source"] = "native"
+    elif result.get("id"):
+        result["id_display"] = str(result.pop("id"))
+        identity = identity or json.dumps(result, sort_keys=True, separators=(",", ":"))
+        result["uuid"] = stable_uuid(kind, identity)
+        result["uuid_source"] = "derived"
+        result["deletion_safe"] = False
     else:
         identity = identity or str(
             result.get("id")
@@ -501,12 +545,19 @@ class DrcExclusionFilter:
         )
         rule = str(violation.get("rule", violation.get("rule_id", "")))
         typ = str(violation.get("type", ""))
-        return bool(
-            (self.uuids and ids & self.uuids)
-            or (self.rules and rule in self.rules)
-            or (self.types and typ in self.types)
-            or (self.references and refs & self.references)
-        )
+        # Different selector categories narrow the selection (AND); values
+        # within one category are alternatives (OR).  This prevents a rule
+        # filter combined with a reference filter from broadening the write.
+        checks = []
+        if self.uuids:
+            checks.append(bool(ids & self.uuids))
+        if self.rules:
+            checks.append(rule in self.rules)
+        if self.types:
+            checks.append(typ in self.types)
+        if self.references:
+            checks.append(bool(refs & self.references))
+        return bool(checks) and all(checks)
 
 
 def select_drc_violations(
@@ -522,14 +573,18 @@ def select_drc_violations(
     """
     if not any((selector.uuids, selector.rules, selector.types, selector.references)):
         raise ValueError("at least one selective DRC exclusion filter is required")
-    matches = [dict(v) for v in violations if selector.matches(v)]
+    records = [dict(v) for v in violations]
+    matches = [dict(v) for v in records if selector.matches(v)]
     if len(matches) > 1 and not dry_run:
         raise ValueError("bulk DRC exclusions require a dry-run preview")
     selected = [with_stable_uuid("violation", v) for v in matches]
-    preview_payload = json.dumps([item["uuid"] for item in selected], separators=(",", ":"))
+    report_payload = json.dumps(records, sort_keys=True, default=str,
+                                separators=(",", ":"))
+    preview_payload = json.dumps(selected, sort_keys=True, default=str, separators=(",", ":"))
     return {
         "status": "preview" if dry_run else "applied",
         "preview_id": hashlib.sha256(preview_payload.encode()).hexdigest()[:16],
+        "report_digest": hashlib.sha256(report_payload.encode()).hexdigest(),
         "matched": selected,
         "excluded_uuids": [item["uuid"] for item in selected],
         "count": len(matches),
@@ -550,7 +605,9 @@ def execute_drc_exclusions(
 ) -> dict[str, Any]:
     """Execute exactly the UUIDs shown by a mandatory dry-run preview."""
     current = select_drc_violations(violations, selector, dry_run=True)
-    if preview.get("status") != "preview" or preview.get("preview_id") != current["preview_id"]:
+    if (preview.get("status") != "preview"
+            or preview.get("preview_id") != current["preview_id"]
+            or preview.get("report_digest") != current["report_digest"]):
         raise ValueError("DRC exclusion preview is stale; generate a new preview")
     ids = list(current["excluded_uuids"])
     if not ids:
