@@ -3,6 +3,11 @@
 Status: implementation complete for the verified KiCad 10.0.4/MCP Pro 3.34.0 stack; live schematic IPC remains unsupported by that stack.
 Recorded: 2026-09-08.
 
+> **Historical implementation record:** Tasks 1-5 below are completed for the pinned runtime.
+> Use `README.md`, `AGENTS.md`, `docs/IMPLEMENTED_FIXES.md`, and `fixes.md` for current operating
+> instructions and remaining work. The old ready-to-use prompt is retained only as provenance and
+> should not be executed as a new task.
+
 ## Objective
 
 Determine whether the installed KiCad/MCP stack supports live schematic access, enable it if supported, and make project selection and validation failures easy to diagnose. Preserve the working PCB IPC workflow.

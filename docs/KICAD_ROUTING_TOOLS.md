@@ -56,8 +56,8 @@ Equivalent Docker commands (create `.kicad-automation/routing/` before first use
 
 ```powershell
 docker compose -f compose.yaml build kicad
-docker compose -f compose.routing.yaml build routing
-docker compose -f compose.routing.yaml run --rm -T routing doctor
+docker compose --project-name kicad-routing-automation -f compose.routing.yaml build routing
+docker compose --project-name kicad-routing-automation -f compose.routing.yaml run --rm -T routing doctor
 ```
 
 `doctor` checks source revision and required scripts. Image construction also runs the upstream
@@ -254,7 +254,7 @@ rejection, not as a successful candidate or an unclassified crash.
 
 ```powershell
 python -m unittest discover -s tests -p 'test_*.py'
-docker compose -f compose.routing.yaml run --rm -T --entrypoint /opt/krt-python/bin/python routing /workspace/tests/integration_routing_mcp.py
+docker compose --project-name kicad-routing-automation -f compose.routing.yaml run --rm -T --entrypoint /opt/krt-python/bin/python routing /workspace/tests/integration_routing_mcp.py
 ```
 
 Verified 2026-09-10 using KiCad 10.0.4 and the pinned Rust engine:

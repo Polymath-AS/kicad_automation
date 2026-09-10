@@ -30,9 +30,10 @@ Paths:
 | Path | Purpose |
 |---|---|
 | `/workspace` | Mounted KiCad repository |
-| `/runtime` | IPC sockets, process logs, validation reports |
+| `/runtime` | Ephemeral IPC sockets and process logs |
 | `/config` | KiCad configuration and HOME |
 | `/cache` | KiCad caches |
+| `/workspace/.kicad-automation/reports` | Persistent host-visible validation reports |
 
 Build and run:
 

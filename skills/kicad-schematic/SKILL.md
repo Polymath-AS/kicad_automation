@@ -7,6 +7,10 @@ KiCad 10 schematic IPC coverage is limited. Use MCP Pro schematic tools such as 
 
 For schematic mutation, prefer MCP Pro operations that already perform scoped structured S-expression edits and validation. New local mutation code should be added only when MCP Pro and KiCad IPC both lack the capability, and it must preserve unrelated data, update only intended nodes, and immediately validate with `kicad-cli sch erc`.
 
+Treat file-backed mutation as unsaved unless a verified save callback exists. Use the repository
+revision/digest adapters for stale-write rejection and report `dirty`, `saved`, and durability state
+truthfully; KiCad 10 does not provide verified live schematic IPC in this runtime.
+
 Do not use regex replacement for KiCad S-expressions. Do not retain or call a generic schematic generator as a fallback.
 
 Return changed-sheet paths, ERC result paths, and unsupported capabilities explicitly.

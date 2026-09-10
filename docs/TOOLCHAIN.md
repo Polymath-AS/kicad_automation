@@ -6,6 +6,8 @@ Required authority split:
 |---|---|
 | Codex-facing EDA tools | `kicad-mcp-pro` |
 | Live PCB inspection and mutation | KiCad 10 IPC through MCP Pro / `kipy` |
+| Placement/routing candidates | Pinned KiCadRoutingTools service on read-only source copies |
+| Reviewed candidate promotion | Repository transaction adapters over MCP Pro live IPC |
 | Schematic operations | MCP Pro schematic tools; file-backed operations are explicit structured S-expression edits |
 | ERC, DRC, parity checks | `kicad-cli` |
 | Gerbers, drills, PDFs, manufacturing outputs | `kicad-cli` and the bundled `kicad10_auto` tools |
@@ -19,6 +21,8 @@ Use the same workflow for automated edits:
 ```text
 inspect through MCP Pro
 edit through IPC-backed MCP Pro tools where supported
+generate placement/routing candidates in isolated KiCadRoutingTools jobs
+promote only reviewed supported deltas through verified transaction adapters
 save through MCP Pro
 validate/export with kicad-cli
 ```

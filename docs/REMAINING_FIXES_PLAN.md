@@ -1,5 +1,10 @@
 # Remaining KiCad Automation Fixes: Implementation Plan
 
+Status: checkpointed working plan. Phases 1-3 and 6-7 have substantial repository and disposable
+runtime coverage; use the acceptance inventory in [`../fixes.md`](../fixes.md) as the current
+source of truth. Historical work-package instructions below explain sequencing but must not be
+treated as evidence that already verified work is still missing.
+
 This document is the execution plan for the acceptance criteria that remain open after commit
 `679d370`. It complements, rather than duplicates, the other project documents:
 
@@ -482,8 +487,8 @@ python -m unittest discover -s tests -p 'test_routing_jobs.py'
 python -m unittest discover -s tests -p 'test_design_contracts.py'
 .\tools\kicad-routing.cmd build
 .\tools\kicad-routing.cmd doctor
-docker compose -f compose.routing.yaml run --rm -T --entrypoint /opt/krt-python/bin/python routing /workspace/tests/integration_routing_mcp.py
-docker compose -f compose.routing.yaml run --rm -T --entrypoint /opt/krt-python/bin/python routing /workspace/tests/integration_electrical_routing.py
+docker compose --project-name kicad-routing-automation -f compose.routing.yaml run --rm -T --entrypoint /opt/krt-python/bin/python routing /workspace/tests/integration_routing_mcp.py
+docker compose --project-name kicad-routing-automation -f compose.routing.yaml run --rm -T --entrypoint /opt/krt-python/bin/python routing /workspace/tests/integration_electrical_routing.py
 .\tools\kicad-docker.cmd validate <disposable-project-stem> --erc --drc
 git diff --check
 git status --short
@@ -503,7 +508,7 @@ blocks that subcriterion; it does not justify skipping independent work packages
 
 ## Execution checkpoint — 2026-09-10
 
-The current working tree implements and tests the repository-side portions of WP1-WP3 and
+At this checkpoint, the repository implements and tests the repository-side portions of WP1-WP3 and
 WP6-WP7: strict routing-plan validation with credential-free capability probing, canonical
 inspection/digest and same-UUID change detection, full copper/placement readback checks,
 atomic failure reporting, Edge.Cuts/courtyard/connector/antenna placement constraints,

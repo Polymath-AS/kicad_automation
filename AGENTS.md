@@ -22,6 +22,12 @@ For any PCB or KiCad project request:
 7. Run the repository validation command after every design mutation:
    `.\tools\kicad-docker.ps1 validate <project-stem> --erc --drc`.
 
+Load the repository skill matching the work: `kicad-preflight`, `kicad-schematic`,
+`kicad-placement`, `kicad-autoroute`, `kicad-drc`, or `kicad-release`. Routing and placement
+promotion must use the reviewed transaction adapters documented by those skills. Fail closed on
+unsupported copper removals/vias, stale source digests, or unverified rollback; never represent a
+partial or recovery-required result as success.
+
 Do not begin an EDA task with a broad scan of `references/`, historical analysis, or unrelated
 helpers. Read only the target project and the tool documentation needed for the requested action.
 
@@ -39,5 +45,7 @@ service with the generated board as its target.
 
 ## Completion criteria
 
-For a test PCB, report the live server state, board summary, files created or changed, save result,
-and ERC/DRC result. Prefer a small deterministic test design over scanning unrelated examples.
+For a test PCB, report the live server state, board summary, files created or changed, save and
+reopen/readback result, and ERC/DRC result. For candidate workflows also report source/candidate
+hashes, promotion status, and rollback/recovery state. Prefer a small deterministic test design
+over scanning unrelated examples.

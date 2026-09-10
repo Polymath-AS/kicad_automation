@@ -1,4 +1,4 @@
-# Optional addition to .codex/config.toml after tools/kicad-routing.cmd build.
+# Minimal copyable routing-server fragment; the repository's default config already includes it.
 # Launch from repository root. Separate candidate-only MCP service.
 [mcp_servers.kicad_routing]
 command = "powershell.exe"

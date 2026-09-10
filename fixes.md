@@ -32,7 +32,7 @@ fails closed.
 | P1-SCHEMA-01 | PARTIAL | Precise nested builder contracts | `scripts/kicad_contracts.py`, `scripts/kicad_schematic.py`; live upstream builder remains file-backed. |
 | P1-STATE-01 | PARTIAL | Save/revision/stale-write semantics | Digest/stale rejection is implemented; durable upstream revision/save endpoint is absent. |
 | P1-PLACE-01 | PARTIAL | Constraint-aware placement | `scripts/kicad_placement.py`, `scripts/kicad_live_placement.py`; live rotation/UUID parity remains limited by inspection payload. |
-| P1-KRT-PLACE-02 | PARTIAL | KiCadRoutingTools pre-route placement refinement | Typed optimize/reseat stages and exact `move_refs` scope are implemented and smoke-tested; reviewed candidate promotion, real-board intent acceptance, and live reseat coverage remain open. |
+| P1-KRT-PLACE-02 | PARTIAL | KiCadRoutingTools pre-route placement refinement | Typed optimize/reseat stages, exact `move_refs`, and reviewed optimize-candidate promotion are verified; real-board intent acceptance and live reseat coverage remain open. |
 | P1-STATUS-01 | VERIFIED | Truthful structured operation status | `OperationResult`, live adapters, and transaction regressions. |
 | P1-RATS-01 | PARTIAL | KiCad 10 ratsnest fallback | `McpLiveAdapter.ratsnest()` consumes DRC/unconnected-net fallback; native endpoint remains unavailable. |
 | P2-EXCLUDE-01 | BLOCKED | Selective persisted DRC exclusions | Preview/selector contract is implemented; pinned writer is unsafe all-violations-only. |

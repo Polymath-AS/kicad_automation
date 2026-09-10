@@ -9,9 +9,11 @@
    connectors, mounting parts, and RF/mechanical-critical parts and supply reviewed intent.
 6. Prefer the isolated KiCadRoutingTools `planes`/`diff`/`route` candidate workflow for routing;
    use `pcb_route_trace` for reviewed small fixes or explicit fallback only.
-6. Save with `pcb_save`.
-7. Run `validate-kicad --erc --drc` through Docker after each meaningful automated change.
-8. Use `validate-kicad --gerbers --drill --pdf` and the bundled `kicad10_auto` tools only from a saved design state that passed validation or has documented accepted violations.
+7. Promote reviewed candidates only through the routing/placement transaction adapters; require
+   stale-source checks, save/reopen/readback, and explicit rollback status.
+8. Save direct IPC edits with `pcb_save`.
+9. Run `validate-kicad --erc --drc` through Docker after each meaningful automated change.
+10. Use `validate-kicad --gerbers --drill --pdf` and the bundled `kicad10_auto` tools only from a saved design state that passed validation or has documented accepted violations.
 
 Schematic work in KiCad 10 is deliberately explicit. Prefer MCP Pro schematic tools. Where MCP Pro uses direct S-expression manipulation, treat that as a visible file-backed operation and validate immediately with `kicad-cli sch erc`.
 

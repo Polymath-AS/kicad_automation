@@ -189,7 +189,7 @@ was not modified.
 
 ## Current verification baseline
 
-- Python unit/contract suite: 73 tests passing, including candidate-routing, electrical controls,
+- Python unit/contract suite: 80 tests passing, including candidate-routing, electrical controls,
   live-adapter, and transactional routing/placement regressions.
 - Container build: `local/kicad-automation:10.0.4-mcp-pro` builds with the compatibility test.
 - Fixture validation: ERC clean, DRC clean, detailed reports persisted under
@@ -206,7 +206,7 @@ expected unconnected/mismatch DRC findings.
 
 ## Latest implementation checkpoint
 
-The current working tree additionally hardens the shared contracts: collection-order-independent
+The latest verified implementation hardens the shared contracts with collection-order-independent
 semantic board digests; detection of same-UUID copper edits; full track/via geometry readback;
 rollback attempts that begin before an apply callback; explicit partial/recovery-required status
 when restoration cannot be verified; preflight rejection of unsupported live via/removal deltas;
@@ -216,7 +216,7 @@ routing policy validation with credential-free parser capability probes and per-
 gates. The default Codex configuration now includes the optional candidate-routing MCP catalog,
 including `routing_plan_trace`.
 
-Verification run in this checkout: `python -m unittest discover -s tests -p 'test_*.py'` (73
+Verification run in this checkout: `python -m unittest discover -s tests -p 'test_*.py'` (80
 passing), `python -m compileall -q scripts tests` (pass), and `git diff --check` (pass). The
 pinned images built successfully. `tests/integration_routing_mcp.py` and
 `tests/integration_electrical_routing.py` passed in the routing image; isolated KiCad 10.0.4
@@ -227,8 +227,8 @@ command is a design-result failure rather than an environment failure. Saved-sou
 rollback remains blocked by the upstream KiCad 10 exact-track restore limitation.
 
 Exact runtime commands included `docker compose --project-directory . -f compose.yaml build kicad`,
-`docker compose --project-directory . -f compose.routing.yaml build routing`,
-`docker compose --project-directory . -f compose.routing.yaml run --rm -T --no-deps routing doctor`,
+`docker compose --project-name kicad-routing-automation --project-directory . -f compose.routing.yaml build routing`,
+`docker compose --project-name kicad-routing-automation --project-directory . -f compose.routing.yaml run --rm -T --no-deps routing doctor`,
 and the two routing-image integration commands documented in the routing guide. The live checks
 used separate Compose projects on ports 3335/3336 with copied `krt-diff`/`krt-smoke` fixtures; the
 user's ESP32 service on port 3334 was not stopped, repointed or mutated.

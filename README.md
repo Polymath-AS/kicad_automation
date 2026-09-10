@@ -140,7 +140,7 @@ inspection/editing and `validate-kicad --erc --drc` before continuing.
 
 ## MCP Surface
 
-Use KiCad MCP Pro tool names directly. The default `pcb_only` profile exposes the live PCB
+Use KiCad MCP Pro tool names directly. The default `builder` profile exposes the live PCB
 workflow, including:
 
 `kicad_get_server_info`, `kicad_get_project_info`, `kicad_get_version`, `pcb_get_board_summary`,
@@ -205,6 +205,11 @@ intent when available. KiCadRoutingTools is the preferred routing path; direct I
 useful for previews and small reviewed fixes. The candidate service reads the source project
 through a read-only mount, preserves the original rules for ERC/DRC, and never automatically
 overwrites the live board.
+
+Reviewed additive-track and placement candidates can be promoted explicitly through
+`scripts/kicad_live_promotion.py` and `scripts/kicad_live_placement.py`. Promotion requires stale
+source checks, save/reopen/readback, and post-mutation validation. Unsupported vias/removals and
+unverifiable rollback fail closed; candidate generation itself remains non-mutating.
 
 ```powershell
 .\tools\kicad-routing.cmd build
