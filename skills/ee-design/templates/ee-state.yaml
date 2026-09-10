@@ -1,0 +1,111 @@
+schema_version: 1
+
+# Current design stage.
+# Typical values:
+# intent, architecture, components, schematic, placement, routing, review, release
+stage: intent
+
+
+intent:
+  # One or two sentences describing what the board is meant to accomplish.
+  summary: ""
+
+  # Important requirements or limitations that should influence the design.
+  # Only record constraints that actually matter.
+  constraints: []
+  # Example:
+  # - "Must fit within 60 x 40 mm"
+  # - "Use 3.3 V logic"
+  # - "USB-C connector must be on board edge"
+
+  # Reasonable engineering assumptions made so work can continue
+  # without unnecessarily asking the user.
+  assumptions: []
+  # Example:
+  # - "Assume standard 4-layer FR4 unless the design requires otherwise"
+  # - "Assume ambient temperature range suitable for normal indoor equipment"
+
+
+architecture:
+  # Short description of the proposed electrical architecture.
+  summary: ""
+
+  # Main functional blocks and their purpose.
+  blocks: []
+  # Example:
+  # - name: "MCU"
+  #   purpose: "Control, communication, and data processing"
+  #   interfaces:
+  #     - "SPI to ADC"
+  #     - "USB to external host"
+  #
+  # - name: "Analog front end"
+  #   purpose: "Condition sensor signal before ADC"
+
+
+components:
+  # Important component selections that represent engineering decisions.
+  # Do not record every generic resistor or capacitor.
+  selected: []
+  # Example:
+  # - function: "3.3 V regulator"
+  #   part: "TPS62840DLCR"
+  #   reason: "Low quiescent current, suitable input range, and sufficient output current"
+  #   datasheet: "https://www.ti.com/lit/ds/..."
+  #   notes:
+  #     - "Use 2.2 uH inductor"
+  #     - "Follow datasheet layout guidance for input/output capacitors"
+
+  # Important functions where the component or solution has not yet been decided.
+  unresolved: []
+  # Example:
+  # - function: "RS485 transceiver"
+  #   reason: "Need to compare integrated protection versus external ESD solution"
+
+
+schematic:
+  # Typical values: pending, in_progress, review, complete
+  status: pending
+
+  # Important electrical or schematic issues that still need attention.
+  # Do not use this as a copy of the ERC report.
+  issues: []
+  # Example:
+  # - "Verify MCU reset pull-up value"
+  # - "Check ADC reference decoupling against datasheet"
+  # - "Confirm connector J3 pin numbering against physical footprint"
+
+
+pcb:
+  # High-level placement requirements that should survive between sessions.
+  placement_intent: []
+  # Example:
+  # - "Place MCU decoupling capacitors immediately beside supply pins"
+  # - "Keep switching regulator input loop compact"
+  # - "Keep USB connector fixed at top board edge"
+  # - "Keep analog front end away from switching regulator"
+
+  # Important routing priorities or constraints.
+  routing_intent: []
+  # Example:
+  # - "Route regulator switching loop before ordinary signals"
+  # - "Treat USB D+/D- as a differential pair"
+  # - "Maintain continuous ground beneath high-speed signals"
+  # - "Keep sensitive analog traces away from switching node"
+
+  # Important PCB/layout problems still requiring work.
+  # Do not duplicate the complete DRC report.
+  issues: []
+  # Example:
+  # - "U4 placement creates poor access to decoupling capacitor"
+  # - "USB pair currently crosses a ground-plane split"
+
+
+# Questions or uncertainties worth remembering.
+#
+# Prefer making reasonable engineering assumptions where possible.
+# Only put something here if the answer may materially affect the design.
+open_questions: []
+# Example:
+# - "Does connector J2 need galvanic isolation?"
+# - "Is the external cable expected to be several meters long?"
