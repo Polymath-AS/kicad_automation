@@ -2,6 +2,16 @@
 
 This repository is operated through the Dockerized KiCad 10 MCP server.
 
+## Electrical design process
+
+For new electrical designs or substantial redesigns, load `ee-design` first.
+
+`ee-design` owns design intent, component selection, and progression through schematic, placement, routing, and review.
+
+Prefer engineering judgment, research, and explicit assumptions over asking the user for every unspecified parameter. Ask only when a missing decision materially changes the intended product.
+
+Use the relevant `kicad-*` skill to execute each stage.
+
 ## EDA tasks
 
 For any PCB or KiCad project request:
@@ -22,8 +32,10 @@ For any PCB or KiCad project request:
 7. Run the repository validation command after every design mutation:
    `.\tools\kicad-docker.ps1 validate <project-stem> --erc --drc`.
 
-Load the repository skill matching the work: `kicad-preflight`, `kicad-schematic`,
-`kicad-placement`, `kicad-autoroute`, `kicad-drc`, or `kicad-release`. Routing and placement
+For new electrical designs or substantial redesigns, load `ee-design` first.
+Then load the repository skill matching the current execution stage:
+`kicad-preflight`, `kicad-schematic`, `kicad-placement`,
+`kicad-autoroute`, `kicad-drc`, or `kicad-release`. Routing and placement
 promotion must use the reviewed transaction adapters documented by those skills. Fail closed on
 unsupported copper removals/vias, stale source digests, or unverified rollback; never represent a
 partial or recovery-required result as success.
