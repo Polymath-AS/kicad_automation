@@ -8,6 +8,11 @@ no need for ad-hoc host-side KiCad or HTTP calls.
 Implemented work and verification evidence are tracked in
 [`docs/IMPLEMENTED_FIXES.md`](docs/IMPLEMENTED_FIXES.md).
 
+The ordered implementation plan for the remaining acceptance gaps is maintained in
+[`docs/REMAINING_FIXES_PLAN.md`](docs/REMAINING_FIXES_PLAN.md). Completed items should be moved
+to `docs/IMPLEMENTED_FIXES.md` only after their acceptance checks have been rerun; `fixes.md`
+will then remain the active backlog rather than a second historical ledger.
+
 ## P0 — Blocks reliable board generation
 
 ### Provide one stable, complete MCP tool surface
@@ -204,7 +209,8 @@ source and limitations.
   rollback for a copper delta remains open because the pinned live surface does not expose a safe
   exact-track identity/restore primitive.
   See
-  [R1-R6 and detailed execution steps](docs/KICAD_ROUTING_TOOLS.md).
+  [remaining-fixes implementation plan](docs/REMAINING_FIXES_PLAN.md) and the
+  [routing architecture guide](docs/KICAD_ROUTING_TOOLS.md).
 
 Items requiring changes inside `kicad-mcp-pro` should be fixed upstream where possible. Any local
 compatibility patch must be pinned to the affected upstream version, covered by a failing-then-

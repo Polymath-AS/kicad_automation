@@ -239,6 +239,10 @@ structured state fields. The validator reports ERC 0 and only the fixture's expe
 
 ## Remaining implementation milestones
 
+The authoritative ordering, acceptance gates, and documentation-archive policy for remaining
+work are in [`REMAINING_FIXES_PLAN.md`](REMAINING_FIXES_PLAN.md). The sections below retain the
+routing-specific milestone context; they are not a separate backlog.
+
 ### R1 — Candidate routing backend (this change)
 
 Pinned source/build, typed route/diff/planes dispatcher, CLI/MCP entry points, read-only source,
