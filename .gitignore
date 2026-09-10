@@ -2,6 +2,7 @@ references/
 __pycache__/
 *.pyc
 *.kicad_prl
+~*.lck
 .kicad-automation/
 .env
 .tmp*
