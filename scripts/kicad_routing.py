@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+import fnmatch
 import hashlib
 import json
 import math
@@ -16,7 +17,7 @@ import subprocess
 import sys
 import time
 import uuid
-from typing import Literal, Mapping, NotRequired, TypedDict
+from typing import Any, Literal, Mapping, NotRequired, TypedDict
 
 try:
     from kicad_contracts import with_stable_uuid
@@ -40,6 +41,7 @@ except ImportError:  # direct repository execution
 
 REVISION = "529f873d4c4c20493b1fa786cc9b42ce6cce2945"
 SCRIPTS = {"route": "route.py", "diff": "route_diff.py", "planes": "route_planes.py"}
+PLACER_SCRIPTS = {"optimize": "place_optimize.py", "reseat": "place_seed.py"}
 NUMBERS = {"track_width": (0.05, 10), "clearance": (0.05, 10),
            "via_size": (0.1, 10), "via_drill": (0.05, 5), "grid_step": (0.025, 1),
            "diff_pair_gap": (0.05, 10), "impedance": (1, 1000),
@@ -96,9 +98,33 @@ class RoutingStep(TypedDict):
     board_edge_clearance: NotRequired[float]
 
 
+class PlacementStep(TypedDict, total=False):
+    enabled: bool
+    mode: Literal["optimize", "reseat"]
+    move_refs: list[str]
+    max_displacement: float
+    swap_max_displacement: float
+    step: float
+    grid_step: float
+    clearance: float
+    board_edge_clearance: float
+    crossing_penalty: float
+    length_weight: float
+    halo_coef: float
+    halo_weight: float
+    edge_halo: float
+    max_passes: int
+    lock: list[str]
+    ignore_nets: list[str]
+    intent: str
+    no_rotate: bool
+    no_swap: bool
+
+
 class RoutingPlan(TypedDict):
     project: str
     steps: list[RoutingStep]
+    placement: NotRequired[PlacementStep]
     timeout_seconds: NotRequired[int]
     schema_version: NotRequired[int]
 
@@ -129,9 +155,88 @@ def normalize_layer(value: str) -> str:
     return value
 
 
+def _string_list(value: Any, name: str) -> list[str]:
+    if (not isinstance(value, list) or any(not isinstance(item, str) or not item or
+                                          item.startswith("-") or len(item) > 256 or
+                                          any(ord(c) < 32 for c in item) for item in value)):
+        raise ValueError(f"{name} must be a list of safe non-empty strings")
+    return value
+
+
+def validate_placement(value: Any) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("placement must be an object")
+    numeric = {
+        "max_displacement": (0, 100), "swap_max_displacement": (0, 100),
+        "step": (0.05, 10), "grid_step": (0.025, 1), "clearance": (0, 10),
+        "board_edge_clearance": (0, 10), "crossing_penalty": (0, 10000),
+        "length_weight": (0, 1000), "halo_coef": (0, 100),
+        "halo_weight": (0, 1000), "edge_halo": (0, 100),
+    }
+    allowed = {"enabled", "mode", "move_refs", *numeric, "max_passes", "lock", "ignore_nets", "intent",
+               "no_rotate", "no_swap"}
+    if set(value) - allowed:
+        raise ValueError("unknown placement option; arbitrary upstream arguments are not accepted")
+    clean: dict[str, Any] = {"enabled": value.get("enabled", True)}
+    if type(clean["enabled"]) is not bool:
+        raise ValueError("placement.enabled must be boolean")
+    mode = value.get("mode", "optimize")
+    if mode not in PLACER_SCRIPTS:
+        raise ValueError("placement.mode must be optimize or reseat")
+    clean["mode"] = mode
+    for name, (low, high) in numeric.items():
+        if name in value:
+            number = value[name]
+            if type(number) not in (int, float) or not math.isfinite(number) or not low <= number <= high:
+                raise ValueError(f"placement.{name} must be between {low} and {high}")
+            clean[name] = number
+    if clean.get("swap_max_displacement", 0) > clean.get("max_displacement", 3):
+        raise ValueError("placement.swap_max_displacement cannot exceed max_displacement")
+    if "max_passes" in value:
+        if type(value["max_passes"]) is not int or not 1 <= value["max_passes"] <= 1000:
+            raise ValueError("placement.max_passes must be an integer from 1..1000")
+        clean["max_passes"] = value["max_passes"]
+    for name in ("move_refs", "lock", "ignore_nets"):
+        if name in value:
+            clean[name] = _string_list(value[name], f"placement.{name}")
+    if "intent" in value:
+        intent = value["intent"]
+        intent_path = Path(intent) if isinstance(intent, str) else None
+        if (not isinstance(intent, str) or not intent or intent_path.is_absolute() or
+                ".." in intent_path.parts):
+            raise ValueError("placement.intent must be a project-relative JSON path")
+        clean["intent"] = intent
+    for name in ("no_rotate", "no_swap"):
+        if name in value:
+            if type(value[name]) is not bool:
+                raise ValueError(f"placement.{name} must be boolean")
+            clean[name] = value[name]
+    if mode == "reseat":
+        unsupported = set(value) & {
+            "swap_max_displacement", "step", "crossing_penalty", "length_weight", "halo_coef",
+            "halo_weight", "edge_halo", "max_passes", "lock", "no_rotate", "no_swap",
+        }
+        if unsupported:
+            raise ValueError(f"reseat placement does not accept optimizer options: {sorted(unsupported)}")
+        if not clean.get("move_refs"):
+            raise ValueError("reseat placement requires a non-empty move_refs list")
+        if "intent" not in clean:
+            raise ValueError("reseat placement requires project-relative intent")
+    # Conservative polish defaults recommended by the pinned placer. They preserve
+    # macro placement while optimizing airwire length, crossings, and whitespace.
+    clean.setdefault("max_displacement", 3)
+    if mode == "optimize":
+        clean.setdefault("length_weight", 0.3)
+        clean.setdefault("crossing_penalty", 30)
+        clean.setdefault("halo_coef", 0.15)
+        clean.setdefault("halo_weight", 2)
+        clean.setdefault("edge_halo", 2)
+    return clean
+
+
 def validate_plan(plan: dict) -> dict:
-    if not isinstance(plan, dict) or set(plan) - {"project", "steps", "timeout_seconds", "schema_version"}:
-        raise ValueError("plan accepts project, steps, timeout_seconds, schema_version only")
+    if not isinstance(plan, dict) or set(plan) - {"project", "steps", "placement", "timeout_seconds", "schema_version"}:
+        raise ValueError("plan accepts project, steps, placement, timeout_seconds, schema_version only")
     schema_version = plan.get("schema_version", 1)
     if type(schema_version) is not int or schema_version not in (1, 2):
         raise ValueError("schema_version must be 1 or 2")
@@ -234,6 +339,8 @@ def validate_plan(plan: dict) -> dict:
         normalized.append(clean)
     result = {"project": plan["project"], "steps": normalized, "timeout_seconds": timeout,
               "schema_version": schema_version}
+    if "placement" in plan:
+        result["placement"] = validate_placement(plan["placement"])
     if schema_version == 1:
         result["warnings"] = ["schema_version omitted or 1 uses legacy router defaults; use schema_version=2 for strict policy"]
     return result
@@ -266,6 +373,61 @@ def command(root: Path, step: dict, board: Path, output: Path) -> list[str]:
         if name in step:
             args.append("--" + name.replace("_", "-") if step[name] else
                         "--no-" + name.replace("_", "-"))
+    return args
+
+
+def _footprint_references(root: Path, board: Path) -> set[str]:
+    router_path = str(root / "py_router")
+    if router_path not in sys.path:
+        sys.path.insert(0, router_path)
+    from kicad_parser import parse_kicad_pcb
+    return set(parse_kicad_pcb(str(board)).footprints)
+
+
+def placement_command(root: Path, placement: dict, board: Path, output: Path) -> list[str]:
+    mode = placement.get("mode", "optimize")
+    args = [sys.executable, str(root / "py_placer" / PLACER_SCRIPTS[mode]), str(board), str(output)]
+    if mode == "reseat":
+        intent = (board.parent / placement["intent"]).resolve()
+        intent.relative_to(board.parent.resolve())
+        if not intent.is_file():
+            raise ValueError(f"placement intent does not exist: {placement['intent']}")
+        args += ["--intent", str(intent), "--reseat", *placement["move_refs"], "--evict-depth", "0"]
+        for name in ("max_displacement", "grid_step", "clearance", "board_edge_clearance"):
+            if name in placement:
+                args += ["--" + name.replace("_", "-"), str(placement[name])]
+        if placement.get("ignore_nets"):
+            args += ["--ignore-nets", *placement["ignore_nets"]]
+        return args
+    for name in ("max_displacement", "swap_max_displacement", "step", "grid_step", "clearance",
+                 "board_edge_clearance", "crossing_penalty", "length_weight", "halo_coef",
+                 "halo_weight", "edge_halo", "max_passes"):
+        if name in placement:
+            args += ["--" + name.replace("_", "-"), str(placement[name])]
+    lock = list(placement.get("lock", []))
+    if placement.get("move_refs"):
+        all_refs = _footprint_references(root, board)
+        requested = set(placement["move_refs"])
+        missing = sorted(requested - all_refs)
+        if missing:
+            raise ValueError(f"placement move_refs not found on board: {missing}")
+        conflicts = sorted(ref for ref in requested if any(fnmatch.fnmatchcase(ref, pat) for pat in lock))
+        if conflicts:
+            raise ValueError(f"placement move_refs are also explicitly locked: {conflicts}")
+        lock.extend(sorted(all_refs - requested))
+    if lock:
+        args += ["--lock", *dict.fromkeys(lock)]
+    if placement.get("ignore_nets"):
+        args += ["--ignore-nets", *placement["ignore_nets"]]
+    if "intent" in placement:
+        intent = (board.parent / placement["intent"]).resolve()
+        intent.relative_to(board.parent.resolve())
+        if not intent.is_file():
+            raise ValueError(f"placement intent does not exist: {placement['intent']}")
+        args += ["--intent", str(intent)]
+    for name in ("no_rotate", "no_swap"):
+        if placement.get(name):
+            args.append("--" + name.replace("_", "-"))
     return args
 
 
@@ -369,9 +531,25 @@ def validate(board: Path, reports: Path) -> dict:
     return checks
 
 
-def regression(baseline: dict, candidate: dict) -> dict:
+def _placement_finding_identity(value: Any) -> Any:
+    """Ignore moved coordinates but retain rule text and native object UUIDs."""
+    if isinstance(value, list):
+        return [_placement_finding_identity(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    return {
+        key: _placement_finding_identity(item)
+        for key, item in value.items()
+        if key not in {"pos", "position", "coordinates"}
+        and not (key == "uuid" and value.get("uuid_source") == "derived")
+        and key != "uuid_source"
+    }
+
+
+def regression(baseline: dict, candidate: dict, *, ignore_positions: bool = False) -> dict:
     def identities(check):
-        return Counter(json.dumps(v, sort_keys=True) for v in check["findings"]
+        return Counter(json.dumps(_placement_finding_identity(v) if ignore_positions else v,
+                                  sort_keys=True) for v in check["findings"]
                        if v.get("type") != "unconnected_items")
     added = sum(sum((identities(candidate[k]) - identities(baseline[k])).values())
                 for k in ("erc", "drc"))
@@ -413,13 +591,17 @@ def doctor(root: Path) -> dict:
     for script in SCRIPTS.values():
         if not (root / "py_router" / script).is_file():
             raise ValueError(f"missing upstream script: {script}")
+    for script in PLACER_SCRIPTS.values():
+        if not (root / "py_placer" / script).is_file():
+            raise ValueError(f"missing upstream placer script: {script}")
     return {"backend": "KiCadRoutingTools", "revision": actual,
-            "operations": list(SCRIPTS), "source_access": "read_only",
+            "operations": ["place", *SCRIPTS], "source_access": "read_only",
             "applies_to_live_board": False,
             "capabilities": {
                 "topology_preview": True,
                 "dry_run": True,
                 "blocking_object_reports": True,
+                "placement_refinement": True,
                 "live_ipc_promotion": False,
                 "strict_policy_controls": False,
                 "policy_capability_probe": True,
@@ -482,15 +664,21 @@ def run_job(plan: dict, workspace: Path, jobs: Path, root: Path) -> dict:
         copy_project(board.parent, baseline_dir)
         current = baseline_dir / board.name
         baseline = validate(current, job / "baseline-checks")
+        validation_baseline = baseline
         result["baseline"] = baseline
-        for index, step in enumerate(plan["steps"], 1):
+        stages: list[tuple[str, dict]] = []
+        if plan.get("placement", {}).get("enabled"):
+            stages.append(("place", plan["placement"]))
+        stages.extend((step["operation"], step) for step in plan["steps"])
+        for index, (operation, step) in enumerate(stages, 1):
             input_dir = job / f"input-{index:02d}"
             copy_project(current.parent, input_dir)
             stage_dir = job / f"step-{index:02d}"
             copy_project(current.parent, stage_dir)
             output = stage_dir / board.name
-            args = command(root, step, input_dir / board.name, output)
-            entry = {"operation": step["operation"], "command": args,
+            args = (placement_command(root, step, input_dir / board.name, output)
+                    if operation == "place" else command(root, step, input_dir / board.name, output))
+            entry = {"operation": operation, "command": args,
                      "log": str(job / f"step-{index:02d}.log"),
                      "policy": {key: step[key] for key in step if key in POLICY_NUMBERS or
                                 key in POLICY_BOOLEANS or key in {"fab_tier", "escalation"}}}
@@ -499,20 +687,23 @@ def run_job(plan: dict, workspace: Path, jobs: Path, root: Path) -> dict:
             # Remove the copied board so a zero-exit/no-output tool cannot pass.
             output.unlink()
             entry["exit_code"] = run_process(args, Path(entry["log"]), plan["timeout_seconds"], stage_dir)
-            entry["metrics"] = metrics_from_log(Path(entry["log"]))
+            entry["metrics"] = (metrics_from_log(Path(entry["log"])) if operation != "place" else None)
             if entry["exit_code"] != 0 or not output.is_file():
                 if entry["exit_code"] == 3:
                     raise RuntimeError(f"routing step {index} rejected by strict fabrication policy; see {entry['log']}")
-                raise RuntimeError(f"routing step {index} failed or did not produce a board")
+                raise RuntimeError(f"{operation} step {index} failed or did not produce a board")
             restore_contract(baseline_dir, stage_dir)
             entry["validation"] = validate(output, job / f"step-{index:02d}-checks")
-            entry["comparison"] = regression(baseline, entry["validation"])
+            entry["comparison"] = regression(
+                validation_baseline, entry["validation"], ignore_positions=operation == "place")
             if entry["comparison"]["regressed"]:
-                raise RuntimeError(f"routing step {index} introduced validation regressions")
+                raise RuntimeError(f"{operation} step {index} introduced validation regressions")
             current = output
+            validation_baseline = entry["validation"]
             save()
         final = result["steps"][-1]["validation"]
-        result["comparison"] = regression(baseline, final)
+        result["comparison"] = regression(
+            baseline, final, ignore_positions=bool(plan.get("placement", {}).get("enabled")))
         result["candidate"] = str(current)
         result["candidate_sha256"] = digest(current)
         result["status"] = "candidate_clean" if all(final[k]["count"] == 0 for k in final) else "needs_review"
@@ -539,9 +730,11 @@ def serve(workspace: Path, jobs: Path, root: Path) -> None:
 
     @server.tool()
     def routing_run_candidate(plan: RoutingPlan) -> dict:
-        """Run a route/diff/planes plan on a saved project copy and return ERC/DRC evidence.
+        """Refine placement, then run route/diff/planes on a saved copy with ERC/DRC evidence.
 
         Plan: {project: relative .kicad_pcb path, timeout_seconds: 10..3600,
+        optional placement: {mode: optimize|reseat, move_refs, max_displacement, lock,
+        ignore_nets, intent, ...},
         steps: [{operation: route|diff|planes, nets: [patterns], layers: [F.Cu,...],
         optional track_width, clearance, via_size, via_drill, grid_step in mm}]}.
         Source must be saved and unlocked. Output stays in /jobs; never applied to live IPC.

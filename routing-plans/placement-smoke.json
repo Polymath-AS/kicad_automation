@@ -1,0 +1,15 @@
+{
+  "project": "tests/fixtures/krt-smoke/krt-smoke.kicad_pcb",
+  "schema_version": 1,
+  "timeout_seconds": 120,
+  "placement": {
+    "mode": "optimize",
+    "move_refs": ["J1"],
+    "max_displacement": 1,
+    "no_rotate": true,
+    "no_swap": true
+  },
+  "steps": [
+    {"operation": "route", "nets": ["SIGNAL"], "layers": ["F.Cu", "B.Cu"]}
+  ]
+}

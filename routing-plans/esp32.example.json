@@ -1,7 +1,12 @@
 {
   "project": "esp32_devboard/esp32_devboard/esp32_devboard.kicad_pcb",
-  "schema_version": 1,
+  "schema_version": 2,
   "timeout_seconds": 600,
+  "placement": {
+    "max_displacement": 3,
+    "lock": ["J*", "H*"],
+    "ignore_nets": ["GND", "+3V3"]
+  },
   "steps": [
     {"operation": "planes", "nets": ["GND"], "layers": ["B.Cu"]},
     {"operation": "diff", "nets": ["USB_D+", "USB_D-"], "layers": ["F.Cu"]},

@@ -35,6 +35,67 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(args[-4:], ['--nets', '*', '--layers', 'F.Cu'])
         self.assertNotIn('--overwrite', args)
 
+    def test_placement_uses_conservative_defaults_and_safe_arguments(self):
+        p = plan()
+        p['placement'] = {'lock': ['J*', 'H*'], 'ignore_nets': ['GND'],
+                          'max_displacement': 2, 'no_rotate': True}
+        placement = routing.validate_plan(p)['placement']
+        self.assertEqual(placement['crossing_penalty'], 30)
+        self.assertEqual(placement['length_weight'], 0.3)
+        args = routing.placement_command(
+            Path('/router'), placement, Path('/project/demo.kicad_pcb'), Path('/out'))
+        self.assertEqual(args[0], routing.sys.executable)
+        self.assertEqual(Path(args[1]).name, 'place_optimize.py')
+        self.assertEqual(Path(args[2]).name, 'demo.kicad_pcb')
+        self.assertEqual(Path(args[3]).name, 'out')
+        self.assertIn('--max-displacement', args)
+        self.assertIn('--lock', args)
+        self.assertIn('--ignore-nets', args)
+        self.assertIn('--no-rotate', args)
+
+    def test_placement_rejects_unsafe_or_inconsistent_options(self):
+        for placement in ({'unknown': True}, {'max_displacement': float('nan')},
+                          {'max_displacement': 2, 'swap_max_displacement': 3},
+                          {'lock': ['--help']}, {'intent': '../outside.json'},
+                          {'mode': 'reseat', 'move_refs': ['U3']},
+                          {'mode': 'reseat', 'move_refs': ['U3'], 'intent': 'floorplan.json',
+                           'no_swap': True}):
+            p = plan()
+            p['placement'] = placement
+            with self.assertRaises(ValueError):
+                routing.validate_plan(p)
+
+    def test_optimize_move_refs_lock_every_other_footprint(self):
+        p = plan()
+        p['placement'] = {'move_refs': ['R12', 'C7'], 'lock': ['J*']}
+        placement = routing.validate_plan(p)['placement']
+        with patch.object(routing, '_footprint_references',
+                          return_value={'U3', 'R12', 'R13', 'C7', 'J1'}):
+            args = routing.placement_command(
+                Path('/router'), placement, Path('/project/demo.kicad_pcb'), Path('/out'))
+        lock_at = args.index('--lock')
+        ignore_at = args.index('--max-displacement')
+        locks = args[lock_at + 1:ignore_at] if lock_at < ignore_at else args[lock_at + 1:]
+        self.assertIn('J*', locks)
+        self.assertIn('U3', locks)
+        self.assertIn('R13', locks)
+        self.assertNotIn('R12', locks)
+        self.assertNotIn('C7', locks)
+
+    def test_reseat_selected_components_uses_intent_and_zero_eviction(self):
+        with tempfile.TemporaryDirectory() as temp:
+            board = Path(temp) / 'demo.kicad_pcb'
+            board.write_text('board')
+            (Path(temp) / 'floorplan.json').write_text('{}')
+            p = plan()
+            p['placement'] = {'mode': 'reseat', 'move_refs': ['U3', 'R12'],
+                              'intent': 'floorplan.json'}
+            placement = routing.validate_plan(p)['placement']
+            args = routing.placement_command(Path('/router'), placement, board, Path('/out'))
+        self.assertEqual(Path(args[1]).name, 'place_seed.py')
+        self.assertEqual(args[args.index('--reseat') + 1:args.index('--evict-depth')], ['U3', 'R12'])
+        self.assertEqual(args[args.index('--evict-depth') + 1], '0')
+
     def test_schema_v2_has_safe_fabrication_defaults_and_policy_arguments(self):
         p = plan()
         p['schema_version'] = 2
@@ -103,6 +164,19 @@ class RoutingTests(unittest.TestCase):
         after['drc']['findings'] = [{'type': 'clearance', 'items': [{'uuid': 'b'}]}]
         self.assertTrue(routing.regression(before, after)['regressed'])
 
+    def test_placement_comparison_ignores_positions_but_not_native_identity(self):
+        before, after = clean(), clean()
+        finding = {'type': 'clearance', 'description': 'same', 'uuid': 'derived-a',
+                   'uuid_source': 'derived', 'items': [{'uuid': 'native-a', 'pos': {'x': 1, 'y': 2}}]}
+        before['drc']['findings'] = [finding]
+        moved = json.loads(json.dumps(finding))
+        moved['uuid'] = 'derived-b'
+        moved['items'][0]['pos'] = {'x': 3, 'y': 4}
+        after['drc']['findings'] = [moved]
+        self.assertFalse(routing.regression(before, after, ignore_positions=True)['regressed'])
+        moved['items'][0]['uuid'] = 'native-b'
+        self.assertTrue(routing.regression(before, after, ignore_positions=True)['regressed'])
+
     def test_candidate_rule_edits_restored_and_source_untouched(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -123,6 +197,28 @@ class RoutingTests(unittest.TestCase):
             self.assertFalse(result['applied'])
             self.assertEqual(Path(result['candidate']).with_suffix('.kicad_pro').read_text(), 'original')
             self.assertTrue(all(p.read_text() == 'original' for p in source.iterdir()))
+
+    def test_placement_runs_before_routing_on_isolated_candidates(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / 'workspace/board'
+            source.mkdir(parents=True)
+            for suffix in ('.kicad_pcb', '.kicad_sch', '.kicad_pro'):
+                (source / ('demo' + suffix)).write_text('original')
+            p = plan()
+            p['placement'] = {'max_displacement': 2, 'lock': ['J*']}
+            commands = []
+            def fake_run(args, log, timeout, cwd):
+                commands.append(Path(args[1]).name)
+                Path(args[3]).write_text('candidate')
+                return 0
+            with patch.object(routing, 'doctor', return_value={}), \
+                 patch.object(routing, 'validate', return_value=clean()), \
+                 patch.object(routing, 'run_process', side_effect=fake_run):
+                result = routing.run_job(p, root/'workspace', root/'jobs', root/'krt')
+            self.assertEqual(commands, ['place_optimize.py', 'route.py'])
+            self.assertEqual([step['operation'] for step in result['steps']], ['place', 'route'])
+            self.assertTrue(result['source_unchanged'])
 
     def test_missing_output_cannot_pass(self):
         with tempfile.TemporaryDirectory() as temp:

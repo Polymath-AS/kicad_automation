@@ -8,9 +8,18 @@ For any PCB or KiCad project request:
 
 1. Confirm the live connection with `kicad_get_server_info`.
 2. Query `kicad_get_project_info` and `pcb_get_board_summary` before editing.
-3. Use MCP Pro IPC-backed PCB tools for inspection, placement, routing, and saving.
-4. Use `kicad_create_new_project` for new projects instead of hand-writing KiCad files.
-5. Run the repository validation command after every design mutation:
+3. Use MCP Pro IPC-backed PCB tools for inspection, initial placement, candidate promotion, and saving.
+4. After initial component placement and before adding copper, prefer the isolated
+   KiCadRoutingTools `place_optimize` candidate stage to improve routability. Lock connectors,
+   mounting parts, and RF/mechanical-critical parts; pass a reviewed placement intent when one
+   exists. Use `move_refs` when only a selected component subset may move; use `mode: reseat`
+   with intent when that subset must be placed again from scratch. Review and promote only a
+   candidate that preserves the hard placement constraints.
+5. Prefer KiCadRoutingTools candidate jobs for board routing (`planes`, `diff`, then `route` as
+   applicable). Use `routing_plan_trace`/`pcb_route_trace` only for previews, small manual fixes,
+   or when the candidate router cannot handle the requested edit; do not silently fall back.
+6. Use `kicad_create_new_project` for new projects instead of hand-writing KiCad files.
+7. Run the repository validation command after every design mutation:
    `.\tools\kicad-docker.ps1 validate <project-stem> --erc --drc`.
 
 Do not begin an EDA task with a broad scan of `references/`, historical analysis, or unrelated

@@ -4,7 +4,11 @@
 2. Connect Codex to `http://127.0.0.1:3334/mcp`.
 3. Call `kicad_get_server_info`, `kicad_get_project_info`, and `kicad_get_version` before editing.
 4. Inspect PCB state with MCP Pro tools such as `pcb_get_board_summary`, `pcb_get_footprints`, `pcb_get_nets`, `pcb_get_tracks`, and `pcb_get_shapes`.
-5. Apply placement or routing edits with IPC-backed MCP Pro tools such as `pcb_move_component`, `pcb_move_footprint`, and `pcb_route_trace`.
+5. Apply the initial placement with IPC-backed MCP Pro tools, save it, then run the conservative
+   KiCadRoutingTools `placement` candidate stage to improve routability before copper. Lock
+   connectors, mounting parts, and RF/mechanical-critical parts and supply reviewed intent.
+6. Prefer the isolated KiCadRoutingTools `planes`/`diff`/`route` candidate workflow for routing;
+   use `pcb_route_trace` for reviewed small fixes or explicit fallback only.
 6. Save with `pcb_save`.
 7. Run `validate-kicad --erc --drc` through Docker after each meaningful automated change.
 8. Use `validate-kicad --gerbers --drill --pdf` and the bundled `kicad10_auto` tools only from a saved design state that passed validation or has documented accepted violations.

@@ -32,6 +32,7 @@ fails closed.
 | P1-SCHEMA-01 | PARTIAL | Precise nested builder contracts | `scripts/kicad_contracts.py`, `scripts/kicad_schematic.py`; live upstream builder remains file-backed. |
 | P1-STATE-01 | PARTIAL | Save/revision/stale-write semantics | Digest/stale rejection is implemented; durable upstream revision/save endpoint is absent. |
 | P1-PLACE-01 | PARTIAL | Constraint-aware placement | `scripts/kicad_placement.py`, `scripts/kicad_live_placement.py`; live rotation/UUID parity remains limited by inspection payload. |
+| P1-KRT-PLACE-02 | PARTIAL | KiCadRoutingTools pre-route placement refinement | Typed optimize/reseat stages and exact `move_refs` scope are implemented and smoke-tested; reviewed candidate promotion, real-board intent acceptance, and live reseat coverage remain open. |
 | P1-STATUS-01 | VERIFIED | Truthful structured operation status | `OperationResult`, live adapters, and transaction regressions. |
 | P1-RATS-01 | PARTIAL | KiCad 10 ratsnest fallback | `McpLiveAdapter.ratsnest()` consumes DRC/unconnected-net fallback; native endpoint remains unavailable. |
 | P2-EXCLUDE-01 | BLOCKED | Selective persisted DRC exclusions | Preview/selector contract is implemented; pinned writer is unsafe all-violations-only. |
@@ -242,6 +243,21 @@ source and limitations.
   partial/recovery-required status when rollback cannot be verified. Saved-source rollback for a
   copper delta remains open because the pinned live surface does not expose a safe exact-track
   identity/restore primitive.
+
+  **Current KiCadRoutingTools placement/routing state:** candidate plans now run the pinned
+  `place_optimize.py` before `planes`/`diff`/`route`, with conservative defaults and per-stage
+  ERC/DRC. `move_refs` is an exact allowlist implemented by locking every other parsed footprint;
+  `mode: reseat` dispatches to `place_seed.py --reseat ... --evict-depth 0` and requires intent.
+  The real isolated smoke moved only J1, kept J2 fixed, routed SIGNAL, reduced unconnected items
+  from one to zero, preserved the source hash, and retained only the fixture's two known footprint
+  warnings. The routing MCP schema/capability integration also passes.
+
+  **Still missing:** the routing service remains candidate-only and cannot promote placement plus
+  copper through one connected MCP transaction; saved-source copper rollback is still unsafe on
+  the pinned live API; a representative real board with reviewed connector/RF intent has not yet
+  exercised `mode: reseat`; placement `JSON_SUMMARY` quality metrics are not yet parsed into
+  `result.json`; and upstream has no public `place_optimize --move-refs` flag, so optimize scoping
+  currently uses the behaviorally equivalent, validated lock complement.
   See
   [remaining-fixes implementation plan](docs/REMAINING_FIXES_PLAN.md) and the
   [routing architecture guide](docs/KICAD_ROUTING_TOOLS.md).

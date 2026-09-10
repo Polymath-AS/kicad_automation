@@ -195,11 +195,16 @@ captured `kicad-cli` log, and an overall status. `clean` is used only when both 
 ran and produced no violations. Missing project files, validator execution errors, and reported
 ERC/DRC violations return distinct nonzero outcomes.
 
-## Optional KiCadRoutingTools routing
+## Preferred KiCadRoutingTools placement and routing
 
-The separate routing image exposes `route`, `diff`, and `planes` as validated candidate jobs
-through CLI and MCP. It reads the source project through a read-only mount, preserves the
-original rules for ERC/DRC, and never automatically overwrites the live board.
+The separate routing image exposes conservative placement refinement plus `route`, `diff`, and
+`planes` as validated candidate jobs through CLI and MCP. After initial MCP placement, save the
+unrouted board and use the candidate placer's bounded moves to improve routability. Lock
+connectors, mounting parts, and RF/mechanical-critical parts, and provide reviewed placement
+intent when available. KiCadRoutingTools is the preferred routing path; direct IPC traces remain
+useful for previews and small reviewed fixes. The candidate service reads the source project
+through a read-only mount, preserves the original rules for ERC/DRC, and never automatically
+overwrites the live board.
 
 ```powershell
 .\tools\kicad-routing.cmd build

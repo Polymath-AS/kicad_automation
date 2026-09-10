@@ -19,12 +19,16 @@ async def main():
             assert set(tools) == {'routing_tools_info', 'routing_run_candidate', 'routing_plan_trace', 'routing_job_result'}
             schema = tools['routing_run_candidate'].inputSchema
             assert 'RoutingStep' in json.dumps(schema), schema
+            assert 'PlacementStep' in json.dumps(schema), schema
             invalid = await session.call_tool('routing_run_candidate', {'plan': {
                 'project': 'unused.kicad_pcb', 'steps': [
                     {'operation': 'route', 'nets': ['*'], 'layers': ['F.Cu'], 'overwrite': True}]}})
             assert invalid.isError, invalid
             info = await session.call_tool('routing_tools_info', {})
             assert not info.isError, info
+            info_payload = json.loads(info.content[0].text)
+            assert info_payload['operations'][0] == 'place', info_payload
+            assert info_payload['capabilities']['placement_refinement'], info_payload
             plan = json.loads(Path('/workspace/routing-plans/smoke.json').read_text())
             response = await session.call_tool('routing_run_candidate', {'plan': plan})
             assert not response.isError, response

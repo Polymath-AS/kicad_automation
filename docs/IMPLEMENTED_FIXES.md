@@ -117,6 +117,14 @@ suite and new live-adapter regressions are recorded below.
 - `tools/kicad-routing.cmd` / `.ps1` support build, doctor, run and stdio MCP.
 - `routing_tools_info`, `routing_run_candidate` and `routing_job_result` provide typed plans
   and persisted results without changing the main MCP Pro profile.
+- Candidate plans can run the pinned KiCadRoutingTools `place_optimize.py` before copper routing.
+  The adapter exposes bounded, typed placement controls with conservative defaults, explicit
+  locks/ignored nets, project-relative floorplan intent, and the same isolation and ERC/DRC gates
+  as route stages. Repository workflow guidance now prefers this placer after initial placement
+  and KiCadRoutingTools for board routing.
+- Placement supports an exact `move_refs` allowlist. Optimize mode derives a lock complement from
+  the pinned parser; reseat mode invokes `place_seed.py --reseat` with required intent and
+  `--evict-depth 0`, so unselected components remain fixed.
 - Source is read-only; staged inputs protect the baseline from upstream input-side edits.
   Original project, schematic and custom-rule files are restored before each independent check.
 - Baseline and each routing stage get ERC and DRC with schematic parity. Finding comparison

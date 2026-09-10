@@ -9,8 +9,8 @@ Cargo.lock did not change, and uses a separate Python environment. The upstream 
 retained at `/opt/KiCadRoutingTools/LICENSE`. Python and Rust sources come from the same revision;
 jobs do not download a latest release or rebuild the router.
 
-Upstream provides obstacle-aware A* routing, rip-up/reroute, differential routing and plane
-operations. This adapter exposes a bounded subset of its CLI through both repository commands
+Upstream provides placement optimization, obstacle-aware A* routing, rip-up/reroute,
+differential routing and plane operations. This adapter exposes a bounded subset of its CLI through both repository commands
 and a separate MCP server. It does not install the GUI plugin or upstream's optional AI agents.
 
 ```text
@@ -18,12 +18,13 @@ CLI / routing MCP
   -> validate typed plan
   -> copy saved project from read-only /workspace
   -> baseline ERC + DRC
-  -> planes / diff / route on staged copies
+  -> bounded placement refinement on a staged copy (when requested)
+  -> planes / diff / route on successive staged copies
        -> restore original project rules and schematic after EACH stage
        -> run independent KiCad ERC + DRC after EACH stage
   -> compare findings -> result.json + candidate project under /jobs
 
-Existing KiCad MCP Pro -> live IPC editing, placement and saving
+Existing KiCad MCP Pro -> live IPC editing, initial placement and saving
 ```
 
 The routing container has no network, a read-only root filesystem and source mount, a writable
@@ -64,14 +65,17 @@ router's `--help`, which imports the compiled engine and performs its startup de
 
 ## 2. Prepare the source project
 
-1. Finish schematic connectivity, placement, board outline, keepouts and manufacturing rules.
+1. Finish schematic connectivity, initial placement, board outline, keepouts and manufacturing rules.
    The router cannot fix an incorrect circuit or infer the ESP32 antenna requirements.
 2. Confirm the selected live document with `kicad_get_server_info`, `kicad_get_project_info`, and
    `pcb_get_board_summary`; persist it with `pcb_save`.
-3. Run `.\tools\kicad-docker.cmd validate <project-stem> --erc --drc` and inspect the baseline.
-4. Save and close the editor, or stop the container owning the project. Source directories with
+3. Add a conservative `placement` stage to refine the existing unrouted placement. Declare locks
+   for connectors, mounting holes, RF/mechanical-critical parts, and pass project-relative intent
+   when available. The placer is an optimizer, not an unaided from-scratch placer.
+4. Run `.\tools\kicad-docker.cmd validate <project-stem> --erc --drc` and inspect the baseline.
+5. Save and close the editor, or stop the container owning the project. Source directories with
    `~*.lck` files are refused. Do not remove another live session's lock.
-5. Keep the matching `.kicad_pro`, `.kicad_sch` and `.kicad_pcb` in a dedicated project directory.
+6. Keep the matching `.kicad_pro`, `.kicad_sch` and `.kicad_pcb` in a dedicated project directory.
    Hierarchical sheets and project-local libraries are copied along with them. Symlinks are
    rejected: package those dependencies explicitly. External absolute library paths may not
    resolve inside Docker; validation must succeed before any candidate can be marked clean.
@@ -93,7 +97,15 @@ ESP32 schematic has separate connector-side and chip-side DP/DM nets; pairing mu
 ```json
 {
   "project": "CAD/my-board/my-board.kicad_pcb",
+  "schema_version": 2,
   "timeout_seconds": 600,
+  "placement": {
+    "mode": "optimize",
+    "move_refs": ["U3", "R12", "R13", "C7", "C8"],
+    "max_displacement": 3,
+    "lock": ["J*", "H*"],
+    "ignore_nets": ["GND", "+3V3"]
+  },
   "steps": [
     {"operation": "planes", "nets": ["GND"], "layers": ["B.Cu"]},
     {"operation": "diff", "nets": ["USB_DP", "USB_DM"], "layers": ["F.Cu"]},
@@ -104,6 +116,38 @@ ESP32 schematic has separate connector-side and chip-side DP/DM nets; pairing mu
 
 Upstream recommends pouring planes first; later routing finalizes plane connectivity. Excluding
 handled differential nets from the generic route step preserves the intended sequence.
+When `placement` is present and enabled, `place_optimize.py` always runs before those copper
+steps. Its conservative defaults are 3 mm maximum displacement, length weight 0.3, crossing
+penalty 30, halo coefficient 0.15, halo weight 2, and edge halo 2 mm. Placement is refused by
+upstream on routed boards unless explicitly overridden; this adapter intentionally does not
+expose that unsafe override.
+
+Placement accepts `max_displacement`, `swap_max_displacement`, `step`, `grid_step`, `clearance`,
+`board_edge_clearance`, `crossing_penalty`, `length_weight`, `halo_coef`, `halo_weight`,
+`edge_halo`, `max_passes`, `lock`, `ignore_nets`, project-relative `intent`, `no_rotate`, and
+`no_swap`. Unknown options, path escapes, nonfinite values, and a swap displacement larger than
+the total displacement cap fail before staging.
+
+Use `move_refs` for an exact component allowlist. In `mode: "optimize"` (the default), the
+adapter reads references through the pinned KiCadRoutingTools parser, rejects missing references,
+and adds every non-selected footprint to the optimizer's lock list. This binds the public CLI to
+the internal `quench(..., move_refs={...})` behavior without maintaining a fork of the upstream
+placer. An explicit `lock` pattern that also matches a selected reference is rejected.
+
+Use `mode: "reseat"` when selected parts should be lifted and placed again from scratch:
+
+```json
+"placement": {
+  "mode": "reseat",
+  "move_refs": ["U3", "R12", "R13", "C7", "C8"],
+  "intent": "floorplan.json",
+  "max_displacement": 3
+}
+```
+
+This invokes `place_seed.py --reseat ... --evict-depth 0`, requires reviewed intent, and holds
+all non-selected parts fixed. Eviction is deliberately disabled so the candidate cannot move an
+unselected blocker. Reseat mode rejects optimizer-only controls rather than silently ignoring them.
 
 | Field | Meaning | Accepted values |
 |---|---|---|
@@ -183,9 +227,9 @@ the minimal copyable fragment for another client. Installation may require one c
 reload, but routine routing jobs do not require profile switching. If Docker or the coordinator
 is unavailable, routing tools remain discoverable with an explicit unavailable reason.
 
-1. `routing_tools_info()` reports backend/revision, source/output boundaries and whether topology
-   preview, dry-run blocking reports and live promotion are available.
-2. `routing_run_candidate(plan)` accepts a typed nested plan and returns the job result.
+1. `routing_tools_info()` reports backend/revision, source/output boundaries and whether placement
+   refinement, topology preview, dry-run blocking reports and live promotion are available.
+2. `routing_run_candidate(plan)` accepts a typed placement-plus-routing plan and returns the job result.
 3. `routing_plan_trace(board, request)` is a pure structured-board dry-run that returns planned
    segments or blocking object UUIDs/coordinates without writing a board.
 4. `routing_job_result(job_id)` reads a persisted result after reconnecting.
