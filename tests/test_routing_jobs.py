@@ -20,6 +20,15 @@ def clean():
 
 
 class RoutingTests(unittest.TestCase):
+    def test_routing_compose_uses_launcher_project_name(self):
+        repo = Path(__file__).parents[1]
+        compose = (repo / 'compose.routing.yaml').read_text(encoding='utf-8')
+        launcher = (repo / 'tools/kicad-routing.ps1').read_text(encoding='utf-8')
+        self.assertFalse(compose.startswith('name:'),
+                         'older Docker Compose rejects the top-level name property')
+        self.assertIn("$composeProject = 'kicad-routing-automation'", launcher)
+        self.assertGreaterEqual(launcher.count('--project-name $composeProject'), 2)
+
     def test_rejects_injected_arguments_and_invalid_numeric_constraints(self):
         for change in ({'nets': ['--overwrite']}, {'unknown': True},
                        {'grid_step': float('nan')}, {'via_size': .2, 'via_drill': .3},
