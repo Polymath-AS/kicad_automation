@@ -12,8 +12,6 @@ kicad-cli
   -> ERC, DRC, exports, validation
 ```
 
-The old KiCad 9 worker, repo-owned MCP server, SWIG `pcbnew` editor, wrapper aliases, and duplicate validation paths have been removed. The active architecture is KiCad MCP Pro plus the bundled tools from `ghcr.io/inti-cmnb/kicad10_auto:1.9.0`.
-
 ## Quick Start
 
 After cloning, start the KiCad container and Codex together:
