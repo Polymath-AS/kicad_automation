@@ -155,7 +155,7 @@ Do not preserve an earlier decision merely because work has already been done do
 
 ## Progress state
 
-For larger designs, maintain a lightweight `design/ee-state.yaml` containing only:
+ For every new electrical project or substantial redesign, maintain `design/ee-state.yaml` using the repository template.
 
 - current stage;
 - important design intent;

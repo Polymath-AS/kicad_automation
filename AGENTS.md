@@ -12,6 +12,27 @@ Prefer engineering judgment, research, and explicit assumptions over asking the 
 
 Use the relevant `kicad-*` skill to execute each stage.
 
+## Required project layout
+
+  Every new electrical project or substantial redesign MUST use this structure:
+
+  <project>/
+  ├── <project>.kicad_pro
+  ├── <project>.kicad_sch
+  ├── <project>.kicad_pcb
+  └── design/
+      └── ee-state.yaml
+
+  Rules:
+
+  - `<project>` is the project root and the filename stem must match the directory name.
+  - Use `kicad_create_new_project` for the three KiCad files.
+  - Create `design/ee-state.yaml` from `skills/ee-design/templates/ee-state.yaml`.
+  - Create and initialize `ee-state.yaml` before modifying the schematic or PCB.
+  - Update `ee-state.yaml` as the design progresses through its stages.
+  - Do not place the state file beside the KiCad files.
+  - Before reporting success, verify that all five required paths exist.
+
 ## EDA tasks
 
 For any PCB or KiCad project request:
