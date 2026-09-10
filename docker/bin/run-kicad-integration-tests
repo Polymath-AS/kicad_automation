@@ -14,27 +14,16 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-mcp_call() {
-  local id=$1
-  local method=$2
-  local params=${3-}
-  local out=$4
-  local request
+mcp_tool_call() {
+  local tool=$1
+  local params=${2-}
+  local out=$3
   if [[ -z "$params" ]]; then
     params='{}'
   fi
-  request=$(jq -cn \
-    --argjson request_id "$id" \
-    --arg request_method "$method" \
-    --argjson request_params "$params" \
-    '{jsonrpc:"2.0",id:$request_id,method:$request_method,params:$request_params}')
-  curl --fail-with-body -sS -X POST "$mcp_url" \
-    -H 'Accept: application/json, text/event-stream' \
-    -H 'Content-Type: application/json' \
-    -H 'MCP-Protocol-Version: 2025-11-25' \
-    -H "Authorization: Bearer ${KICAD_MCP_AUTH_TOKEN}" \
-    --data "$request" \
-    > "$out"
+  python3 /usr/local/lib/kicad-automation/kicad_mcp_client.py \
+    --url "$mcp_url" --token "$KICAD_MCP_AUTH_TOKEN" --timeout 120 \
+    call "$tool" --arguments "$params" > "$out"
 }
 
 has_tool() {
@@ -60,7 +49,9 @@ kicad-mcp-pro \
 mcp_pid=$!
 
 for _ in $(seq 1 120); do
-  if mcp_call 1 initialize '{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"kicad-integration-test","version":"1.0.0"}}' /runtime/test-mcp-initialize.json 2>/runtime/test-mcp-initialize.err; then
+  if python3 /usr/local/lib/kicad-automation/kicad_mcp_client.py \
+      --url "$mcp_url" --token "$KICAD_MCP_AUTH_TOKEN" --timeout 5 initialize \
+      >/runtime/test-mcp-initialize.json 2>/runtime/test-mcp-initialize.err; then
     break
   fi
   if ! kill -0 "$mcp_pid" >/dev/null 2>&1; then
@@ -75,7 +66,9 @@ done
   exit 2
 }
 
-mcp_call 2 "tools/list" '{}' /runtime/test-mcp-tools.json
+python3 /usr/local/lib/kicad-automation/kicad_mcp_client.py \
+  --url "$mcp_url" --token "$KICAD_MCP_AUTH_TOKEN" --timeout 120 list \
+  >/runtime/test-mcp-tools.json
 has_tool kicad_get_server_info || { printf 'MCP tool list missing kicad_get_server_info\n' >&2; exit 2; }
 
 if [[ "${KICAD_MCP_PROFILE:-builder}" == builder ]]; then
@@ -95,15 +88,15 @@ if [[ "${KICAD_MCP_PROFILE:-builder}" == builder ]]; then
   done
 fi
 
-mcp_call 3 "tools/call" '{"name":"kicad_get_server_info","arguments":{}}' /runtime/test-mcp-server-info.json
-mcp_call 4 "tools/call" '{"name":"kicad_get_project_info","arguments":{}}' /runtime/test-mcp-project-info.json
+mcp_tool_call "kicad_get_server_info" '{}' /runtime/test-mcp-server-info.json
+mcp_tool_call "kicad_get_project_info" '{}' /runtime/test-mcp-project-info.json
 
 pcb_exposed=0
 if has_tool pcb_get_board_summary; then
   pcb_exposed=1
-  mcp_call 5 "tools/call" '{"name":"pcb_get_board_summary","arguments":{}}' /runtime/test-mcp-ipc-summary.json
-  mcp_call 6 "tools/call" '{"name":"pcb_save","arguments":{}}' /runtime/test-mcp-save.json
-  mcp_call 7 "tools/call" '{"name":"pcb_get_board_summary","arguments":{}}' /runtime/test-mcp-ipc-summary-after-save.json
+  mcp_tool_call "pcb_get_board_summary" '{}' /runtime/test-mcp-ipc-summary.json
+  mcp_tool_call "pcb_save" '{}' /runtime/test-mcp-save.json
+  mcp_tool_call "pcb_get_board_summary" '{}' /runtime/test-mcp-ipc-summary-after-save.json
 
   jq -e '.result.content[]?.text? | contains("Source: live-gui")' /runtime/test-mcp-ipc-summary.json >/dev/null || {
     printf 'PCB summary did not prove live-gui IPC usage\n' >&2
@@ -125,7 +118,7 @@ live_schematic_read=$(printf '%s\n' "$server_info" | jq -r '.capabilities.liveSc
 schematic_exposed=0
 if has_tool sch_get_symbols; then
   schematic_exposed=1
-  mcp_call 8 "tools/call" '{"name":"sch_get_symbols","arguments":{}}' /runtime/test-mcp-schematic-read.json
+  mcp_tool_call "sch_get_symbols" '{}' /runtime/test-mcp-schematic-read.json
   jq -e '.result.content[]?.text? | contains("Source: file-backed")' /runtime/test-mcp-schematic-read.json >/dev/null || {
     printf 'Schematic read did not identify its file-backed backend\n' >&2
     exit 2
@@ -154,15 +147,42 @@ fi
 validate_code=0
 validate-kicad --project "/workspace/${stem}" --erc --drc >/runtime/test-validate.json 2>/runtime/test-validate.err || validate_code=$?
 if [[ "$validate_code" -ne 0 ]]; then
+  if [[ "${KICAD_TEST_PAD_TO_PAD:-0}" == "1" && "$validate_code" -eq 1 ]]; then
+    printf 'M4 disposable fixture has expected baseline DRC findings; continuing to pad-to-pad regression\n' >&2
+  else
   printf 'Validation failed with exit code %s; see /runtime/test-validate.json, /runtime/test-validate.err, and /runtime/reports\n' "$validate_code" >&2
   cat /runtime/test-validate.json >&2 2>/dev/null || true
   cat /runtime/test-validate.err >&2 2>/dev/null || true
   exit "$validate_code"
+  fi
 fi
+if [[ "${KICAD_TEST_PAD_TO_PAD:-0}" != "1" ]]; then
 jq -e '.status == "clean" and ([.results[]?.name] | index("erc")) and ([.results[]?.name] | index("drc"))' /runtime/test-validate.json >/dev/null || {
   printf 'Validation completed without explicit clean ERC and DRC results\n' >&2
   exit 2
 }
+else
+jq -e '([.results[]?.name] | index("erc")) and ([.results[]?.name] | index("drc"))' /runtime/test-validate.json >/dev/null || {
+  printf 'M4 baseline did not produce explicit ERC and DRC results\n' >&2
+  exit 2
+}
+fi
+
+# M4 is opt-in because it must run against a disposable two-pad project and the
+# upstream helper is experimental.  The regression performs pad resolution,
+# route creation, save/readback and pinned KiCad DRC through the checked-in
+# client; it never substitutes a lower-level segment call.
+if [[ "${KICAD_TEST_PAD_TO_PAD:-0}" == "1" ]]; then
+  python3 /usr/local/lib/kicad-automation/pad_to_pad_regression.py \
+    "${KICAD_TEST_START_REFERENCE:-J1}" "${KICAD_TEST_START_PAD:-1}" \
+    "${KICAD_TEST_END_REFERENCE:-J2}" "${KICAD_TEST_END_PAD:-1}" \
+    --project "/workspace/${stem}" \
+    --url "$mcp_url" --token "$KICAD_MCP_AUTH_TOKEN" \
+    >/runtime/test-pad-to-pad.json 2>/runtime/test-pad-to-pad.err || {
+      printf 'M4 pad-to-pad regression failed; see /runtime/test-pad-to-pad.json and .err\n' >&2
+      exit 2
+    }
+fi
 
 artifacts=(
   "/runtime/test-mcp-server-info.json"
@@ -179,6 +199,9 @@ if [[ "$pcb_exposed" -eq 1 ]]; then
 fi
 if [[ "$schematic_exposed" -eq 1 ]]; then
   artifacts+=("/runtime/test-mcp-schematic-read.json")
+fi
+if [[ "${KICAD_TEST_PAD_TO_PAD:-0}" == "1" ]]; then
+  artifacts+=("/runtime/test-pad-to-pad.json" "/runtime/test-pad-to-pad.err")
 fi
 artifact_json=$(printf '%s\n' "${artifacts[@]}" | jq -R -s 'split("\n") | map(select(length > 0))')
 printf '{"status":"ok","kicad_version":%s,"ipc_socket":%s,"mcp_url":%s,"live_schematic_context":%s,"live_schematic_read":%s,"pcb_tool_exposed":%s,"schematic_tool_exposed":%s,"artifacts":%s}\n' \

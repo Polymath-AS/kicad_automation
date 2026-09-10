@@ -1,0 +1,32 @@
+{
+  "name": "connector-rf-placement-intent",
+  "edge_cuts": {"left": 0, "bottom": 0, "right": 40, "top": 30},
+  "antenna_keepouts": [
+    {"left": 34, "bottom": 8, "right": 40, "top": 22}
+  ],
+  "footprints": [
+    {
+      "reference": "J1",
+      "position": {"x_mm": 2, "y_mm": 15},
+      "size": {"width": 2, "height": 8},
+      "courtyard": {"left": 0, "bottom": 10, "right": 4, "top": 20},
+      "intent": {"connector_edge": "left"}
+    },
+    {
+      "reference": "U1",
+      "position": {"x_mm": 20, "y_mm": 15},
+      "size": {"width": 6, "height": 6},
+      "courtyard": {"left": 17, "bottom": 12, "right": 23, "top": 18},
+      "intent": {
+        "module": "rf",
+        "antenna_keepout": {"left": 34, "bottom": 8, "right": 40, "top": 22}
+      }
+    },
+    {
+      "reference": "J2",
+      "position": {"x_mm": 30, "y_mm": 26},
+      "size": {"width": 2, "height": 2},
+      "locked": true
+    }
+  ]
+}

@@ -19,7 +19,8 @@ RUN python3 -m venv /opt/krt-python \
  && /opt/krt-python/bin/pip install --no-cache-dir numpy==2.2.6 scipy==1.15.3 shapely==2.1.1 Pillow==11.2.1 'mcp==1.26.0' \
  && /opt/krt-python/bin/python /opt/KiCadRoutingTools/py_router/route.py --help >/tmp/krt-help.txt
 COPY scripts/kicad_routing.py /opt/krt-adapter/kicad_routing.py
-ENV KRT_ROOT=/opt/KiCadRoutingTools KRT_WORKSPACE=/workspace KRT_JOBS=/jobs
+ENV KRT_ROOT=/opt/KiCadRoutingTools KRT_WORKSPACE=/workspace KRT_JOBS=/jobs \
+    PYTHONPATH=/usr/local/lib/kicad-automation:/opt/krt-adapter
 WORKDIR /jobs
 ENTRYPOINT ["/opt/krt-python/bin/python", "/opt/krt-adapter/kicad_routing.py"]
 CMD ["doctor"]

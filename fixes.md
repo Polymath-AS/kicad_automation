@@ -8,6 +8,39 @@ no need for ad-hoc host-side KiCad or HTTP calls.
 Implemented work and verification evidence are tracked in
 [`docs/IMPLEMENTED_FIXES.md`](docs/IMPLEMENTED_FIXES.md).
 
+The ordered implementation plan for the remaining acceptance gaps is maintained in
+[`docs/REMAINING_FIXES_PLAN.md`](docs/REMAINING_FIXES_PLAN.md). Completed items should be moved
+to `docs/IMPLEMENTED_FIXES.md` only after their acceptance checks have been rerun; `fixes.md`
+will then remain the active backlog rather than a second historical ledger.
+
+## Acceptance inventory
+
+The stable IDs below split the original acceptance criteria into independently verifiable
+work. `VERIFIED` means the recorded evidence meets the live/runtime contract; `PARTIAL` means
+the repository boundary is implemented but a required upstream/live capability is still open;
+`BLOCKED` means the pinned runtime cannot provide the required safe operation and the adapter
+fails closed.
+
+| ID | Status | Scope | Implementation/evidence |
+| --- | --- | --- | --- |
+| P0-TOOLS-01 | PARTIAL | One-session live + routing discovery | `scripts/kicad_contracts.py`, `.codex/config.toml`; routing remains a separate unavailable backend until a coordinator is connected. |
+| P0-TOOLS-02 | VERIFIED | Supported MCP client and SSE/JSON calls | `scripts/kicad_mcp_client.py`, `tests/test_mcp_client.py`. |
+| P0-ROUTE-01 | VERIFIED | KiCad 10 named-pad routing | M4 evidence in `docs/IMPLEMENTED_FIXES.md`; preserved this pass. |
+| P0-TOPO-01 | PARTIAL | Topology-aware dry run and atomic routing | `scripts/kicad_topology.py`, `tests/test_design_contracts.py`; live promotion rollback after save remains open. |
+| P0-REPORT-01 | VERIFIED | Persistent ERC/DRC artifacts | Docker validation/report fixtures and routing integration tests. |
+| P1-SCH-01 | PARTIAL | Pin-addressed no-connect and ERC units | `scripts/kicad_live_adapter.py`; pinned surface has no verified schematic-save callback. |
+| P1-SCHEMA-01 | PARTIAL | Precise nested builder contracts | `scripts/kicad_contracts.py`, `scripts/kicad_schematic.py`; live upstream builder remains file-backed. |
+| P1-STATE-01 | PARTIAL | Save/revision/stale-write semantics | Digest/stale rejection is implemented; durable upstream revision/save endpoint is absent. |
+| P1-PLACE-01 | PARTIAL | Constraint-aware placement | `scripts/kicad_placement.py`, `scripts/kicad_live_placement.py`; live rotation/UUID parity remains limited by inspection payload. |
+| P1-STATUS-01 | VERIFIED | Truthful structured operation status | `OperationResult`, live adapters, and transaction regressions. |
+| P1-RATS-01 | PARTIAL | KiCad 10 ratsnest fallback | `McpLiveAdapter.ratsnest()` consumes DRC/unconnected-net fallback; native endpoint remains unavailable. |
+| P2-EXCLUDE-01 | BLOCKED | Selective persisted DRC exclusions | Preview/selector contract is implemented; pinned writer is unsafe all-violations-only. |
+| P2-UUID-01 | PARTIAL | Stable native UUID exposure | Native IDs are preserved and truncated IDs are marked non-deletion-safe; complete live object pagination is not exposed. |
+| P2-PATH-01 | VERIFIED | Project destination/path semantics | `resolve_project_paths()` and Windows/relative path regressions in `tests/test_design_contracts.py`. |
+| P2-FOOTPRINT-01 | VERIFIED | Qualified footprint identity preservation | Version-scoped 3.34.0 patch and build-time compatibility regression. |
+| P2-API-01 | VERIFIED | Layer/status/result contract quality | Layer normalization, structured status envelopes, and refusal regressions in adapter/contract tests. |
+| M6-TRANSACTION-01 | PARTIAL | Live routing/placement promotion and rollback | Disposable live success/readback passes; saved-source copper rollback and coordinator remain open. |
+
 ## P0 — Blocks reliable board generation
 
 ### Provide one stable, complete MCP tool surface
@@ -84,6 +117,14 @@ Correct the ERC coordinate unit/scale contract and expose canonical pin names fr
 **Acceptance:** Adding a no-connect to `J1.SH` clears only that ERC finding without coordinate
 math or file inspection.
 
+**Current evidence:** `scripts/kicad_live_adapter.py` resolves `reference/pin` through live
+symbol and pin-position inspection, sends exact millimetre coordinates with snapping off, and
+reports the ERC finding delta. A disposable KiCad 10.0.4 USB-C fixture cleared only the `SH`
+finding and retained the other pin-not-connected findings after service restart.
+The adapter reports `saved=false, dirty=true` unless a verified schematic-save callback is
+supplied, because the pinned upstream surface has no independent schematic-save operation;
+durability remains open.
+
 ### Make schematic builder schemas match implementation
 
 **Observed:** `sch_build_circuit` examples/documentation used `lib_id`, while runtime validation
@@ -120,6 +161,14 @@ overlap, courtyard, connector edge, antenna keepout, and locked parts.
 **Acceptance:** Auto-placement produces zero hard-constraint violations or returns a non-mutating
 failure identifying unsatisfied constraints.
 
+**Current evidence:** `scripts/kicad_placement.py` derives bounds from Edge.Cuts, checks body and
+courtyard overlap, locked parts, connector edges, and antenna keepouts before mutation. The
+repository contract covers successful constrained placement and unsatisfiable atomic failure.
+`scripts/kicad_live_placement.py` promotes a reviewed position delta through the pinned
+`pcb_move_footprint`/save/reopen path; a disposable KiCad 10 fixture verified saved readback.
+The live adapter is position-oriented because the pinned footprint listing does not expose a
+full rotation/UUID payload; repository constraints still retain the complete intent model.
+
 ### Return trustworthy operation status
 
 **Observed:** `pcb_delete_items` could delete objects but report postcondition verification failure
@@ -149,42 +198,64 @@ source and limitations.
 
 ## P2 — Workflow and API quality
 
-- **Implemented for the pinned routing layer resolver:** normalize layer inputs (`F.Cu`, `F_Cu`,
-  and `BL_F_Cu` IPC enum forms). Other upstream API boundaries still need contract coverage.
-- Include stable UUIDs in shape, track, pad, and violation inspection results so exact deletion
-  and exclusion are possible.
-- Replace `drc_add_exclusion`'s all-current-violations behavior with selective filters by UUID,
-  rule, type, reference, and a mandatory dry-run preview for bulk exclusions.
-- Support board-level minimum through-hole and NPTH constraints; distinguish footprint-internal
-  library exceptions from real board rule violations.
-- Make `sch_analyze_net_compilation` analyze the current schematic by default, or rename it to make
-  its request-only behavior explicit.
-- Expose ERC alongside schematic mutation tools instead of tying it to an unrelated profile.
-- Define new-project destination semantics so a requested project directory is not duplicated as
-  `<name>/<name>` unexpectedly; return all created paths.
+- **Implemented:** normalize layer inputs (`F.Cu`, `F_Cu`, and `BL_F_Cu` IPC enum forms) and
+  provide contract coverage for stable inspection UUIDs, typed mutation envelopes, and the
+  supported backend boundaries. Upstream tool-specific additions still require live coverage.
+- **Implemented in the repository adapter:** include stable UUIDs in shape, track, pad, and
+  violation inspection results so exact deletion and exclusion are possible.
+- **Implemented in the repository adapter:** selective DRC filters by UUID, rule, type, and
+  reference with mandatory dry-run preview for bulk exclusions. The live adapter previews the
+  pinned KiCad 10 DRC report and fails closed rather than invoking the upstream tool's unsafe
+  all-violation writer; selected live execution remains blocked by that upstream schema.
+- **Implemented in the repository adapter:** board-level minimum through-hole and NPTH constraints
+  distinguish footprint-internal library exceptions from real board-rule violations.
+- **Implemented in the repository adapter:** `sch_analyze_net_compilation` defaults to the current
+  schematic when a current-document resolver is supplied.
+- **Implemented in the stable catalog:** ERC tools are discoverable alongside schematic mutation
+  tools rather than tied to a profile.
+- **Implemented in the repository adapter:** project destination resolution returns all created
+  paths without implicit nested duplication.
 - **Implemented:** avoid Windows execution-policy friction with scoped `.cmd` launchers. Docker
   permission failures are classified and preserved, while host privilege policy remains external.
+- **Implemented:** live no-connect and ratsnest adapters expose truthful revision/save fields,
+  explicit fallback source/limitations, and domain refusal status instead of treating
+  `isError=false` refusal text as success.
 
 ## Implementation milestones
 
 - [x] **M1:** Check in this evidence-based backlog.
 - [x] **M2:** Add and test the repository MCP client; replace new ad-hoc HTTP usage in docs/scripts.
 - [x] **M3:** Persist validation artifacts under the mounted workspace and test the path contract.
-- [ ] **M4:** Add an integration regression for KiCad 10 pad-to-pad routing and fix upstream or carry
+- [x] **M4:** Add an integration regression for KiCad 10 pad-to-pad routing and fix upstream or carry
   a narrowly versioned compatibility patch.
 - [x] **M5:** Deliver the stable catalog/backend metadata and eliminate profile switching for the
   end-to-end board workflow.
 - [ ] **M6:** Add transactional topology-aware routing and constraint-aware placement.
   **Partially implemented:** pinned KiCadRoutingTools candidate backend, typed CLI/MCP plans,
   isolated source copies, per-stage ERC/DRC, original-rule restoration and regression detection.
-  Live IPC promotion/rollback and constraint-aware placement remain open. See
-  [R1-R6 and detailed execution steps](docs/KICAD_ROUTING_TOOLS.md).
+  Repository-level transactional routing, dry-run blockers, rollback and constrained placement
+  contracts are implemented and unit-tested. A disposable pinned KiCad 10 live promotion now
+  covers candidate application, save, `pcb_revert` reopen, readback, net identity, and structured
+  success; live constrained-placement promotion now also covers save/reopen/readback. Shared
+  transactions now detect same-UUID edits, preflight unsupported vias/removals before the first
+  live write, verify full track/via geometry, preserve placement rotation/layer, and report
+  partial/recovery-required status when rollback cannot be verified. Saved-source rollback for a
+  copper delta remains open because the pinned live surface does not expose a safe exact-track
+  identity/restore primitive.
+  See
+  [remaining-fixes implementation plan](docs/REMAINING_FIXES_PLAN.md) and the
+  [routing architecture guide](docs/KICAD_ROUTING_TOOLS.md).
 
 Items requiring changes inside `kicad-mcp-pro` should be fixed upstream where possible. Any local
 compatibility patch must be pinned to the affected upstream version, covered by a failing-then-
 passing integration test, and removed when the pinned dependency contains the fix.
 
-M4 is in progress: the version-pinned KiCad 10 pad lookup patch and a build-time regression are in
-place. A non-destructive live lookup reached the tool but was blocked because upstream marks
-`route_from_pad_to_pad` as experimental while the service runs in write mode. The milestone remains
-open until a disposable two-pad fixture proves route creation, save, and DRC end to end.
+M4 is complete for the pinned runtime: the version-pinned KiCad 10 pad lookup patch, build-time
+regression, and `scripts/pad_to_pad_regression.py` are in place. In an isolated experimental-mode
+KiCad 10.0.4 service, J1.1-to-J2.1 was resolved and routed on SIGNAL, saved, read back as live
+tracks, and checked by DRC with zero unconnected items. The fixture's two pre-existing
+`footprint_symbol_mismatch` warnings remain documented; they are not hidden by the regression.
+
+The qualified-footprint synchronization defect is now patched narrowly for kicad-mcp-pro 3.34.0:
+the file-backed renderer preserves the schematic `Library:Footprint` name in the board footprint
+root. The image build regression exercises that renderer before the service starts.

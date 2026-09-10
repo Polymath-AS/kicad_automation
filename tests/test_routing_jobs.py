@@ -35,6 +35,63 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(args[-4:], ['--nets', '*', '--layers', 'F.Cu'])
         self.assertNotIn('--overwrite', args)
 
+    def test_schema_v2_has_safe_fabrication_defaults_and_policy_arguments(self):
+        p = plan()
+        p['schema_version'] = 2
+        p['steps'][0].update({
+            'max_iterations': 5000, 'max_probe_iterations': 1000,
+            'fab_tier': 'standard', 'escalation': 'off',
+            'strict_sizes': True, 'no_fix_drc_settings': True,
+            'board_edge_clearance': 0.25,
+        })
+        normalized = routing.validate_plan(p)
+        self.assertTrue(normalized['steps'][0]['strict_sizes'])
+        args = routing.command(Path('/router'), normalized['steps'][0], Path('/in'), Path('/out'))
+        self.assertIn('--max-iterations', args)
+        self.assertIn('--strict-sizes', args)
+        self.assertIn('--board-edge-clearance', args)
+
+    def test_schema_v2_rejects_conflicting_or_bad_policy_values(self):
+        p = plan()
+        p['schema_version'] = 2
+        p['steps'][0].update({'force_reroute': True, 'keep_input_copper': True})
+        with self.assertRaisesRegex(ValueError, 'conflicting'):
+            routing.validate_plan(p)
+        p = plan()
+        p['schema_version'] = 2
+        p['steps'][0]['max_probe_iterations'] = 2.5
+        with self.assertRaisesRegex(ValueError, 'integer'):
+            routing.validate_plan(p)
+
+    def test_differential_and_plane_controls_are_typed_and_dispatched(self):
+        diff = plan()
+        diff['steps'][0].update({
+            'operation': 'diff', 'diff_pair_gap': 0.2, 'impedance': 90,
+            'diff_pair_intra_match': True,
+        })
+        normalized = routing.validate_plan(diff)
+        args = routing.command(Path('/router'), normalized['steps'][0], Path('/in'), Path('/out'))
+        self.assertIn('--diff-pair-gap', args)
+        self.assertIn('--impedance', args)
+        self.assertIn('--diff-pair-intra-match', args)
+        plane = plan()
+        plane['steps'][0].update({
+            'operation': 'planes', 'power_nets': ['VCC'], 'power_nets_widths': [0.5],
+            'zone_clearance': 0.3, 'stitch_vias': True,
+        })
+        normalized = routing.validate_plan(plane)
+        args = routing.command(Path('/router'), normalized['steps'][0], Path('/in'), Path('/out'))
+        self.assertIn('--power-nets', args)
+        self.assertIn('--power-nets-widths', args)
+        self.assertIn('--zone-clearance', args)
+        self.assertIn('--stitch-vias', args)
+
+    def test_electrical_controls_cannot_leak_between_operations(self):
+        p = plan()
+        p['steps'][0].update({'operation': 'route', 'diff_pair_gap': 0.2})
+        with self.assertRaisesRegex(ValueError, 'differential controls'):
+            routing.validate_plan(p)
+
     def test_path_escape(self):
         with tempfile.TemporaryDirectory() as temp:
             with self.assertRaises(ValueError):

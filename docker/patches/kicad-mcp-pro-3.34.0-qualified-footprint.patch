@@ -1,0 +1,14 @@
+diff --git a/kicad_mcp/tools/pcb.py b/kicad_mcp/tools/pcb.py
+--- a/kicad_mcp/tools/pcb.py
++++ b/kicad_mcp/tools/pcb.py
+@@ -2328,2 +2328,10 @@
+     block = path.read_text(encoding="utf-8", errors="ignore").strip()
++    # KiCad library files use an unqualified root name.  The board instance
++    # must retain the schematic's Library:Footprint identity for sync parity.
++    block = re.sub(
++        rf"^\(footprint\s+{STRING_PATTERN}",
++        lambda _match: f"(footprint {_sexpr_string(footprint_assignment)}",
++        block,
++        count=1,
++    )
+     block = _replace_property_value(block, "Reference", reference)

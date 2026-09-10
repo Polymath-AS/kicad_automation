@@ -310,11 +310,8 @@ start_mcp_http() {
 wait_for_mcp_http() {
   local url="http://127.0.0.1:${KICAD_MCP_PORT}${KICAD_MCP_MOUNT_PATH}"
   for _ in $(seq 1 120); do
-    if curl --fail-with-body -sS -X POST "$url" \
-      -H 'Accept: application/json, text/event-stream' \
-      -H 'Content-Type: application/json' \
-      -H "Authorization: Bearer ${KICAD_MCP_AUTH_TOKEN}" \
-      --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"kicad-runtime","version":"1.0.0"}}}' \
+    if python3 /usr/local/lib/kicad-automation/kicad_mcp_client.py \
+      --url "$url" --token "$KICAD_MCP_AUTH_TOKEN" --timeout 5 initialize \
       >/runtime/mcp-initialize.json 2>/runtime/mcp-initialize.err; then
       log MCP "HTTP endpoint is ready at $url"
       return

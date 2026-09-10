@@ -1,5 +1,6 @@
 {
   "project": "tests/fixtures/krt-smoke/krt-smoke.kicad_pcb",
+  "schema_version": 1,
   "timeout_seconds": 120,
   "steps": [
     {"operation": "route", "nets": ["SIGNAL"], "layers": ["F.Cu", "B.Cu"]}

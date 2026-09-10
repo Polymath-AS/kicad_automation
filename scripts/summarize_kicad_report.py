@@ -10,6 +10,11 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+try:
+    from kicad_contracts import stable_uuid
+except ImportError:  # direct repository test import
+    from scripts.kicad_contracts import stable_uuid
+
 
 REFERENCE_PATTERNS = (
     re.compile(r"\bSymbol\s+(?P<ref>[A-Za-z][A-Za-z0-9_-]*\d+)\b"),
@@ -21,7 +26,12 @@ def collect_findings(report: dict[str, Any]) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     for category in ("violations", "unconnected_items", "schematic_parity"):
         for finding in report.get(category, []) or []:
-            findings.append({**finding, "category": category})
+            item = {**finding, "category": category}
+            item.setdefault(
+                "uuid",
+                stable_uuid("violation", {"category": category, **finding}),
+            )
+            findings.append(item)
     for sheet in report.get("sheets", []) or []:
         for finding in sheet.get("violations", []) or []:
             findings.append(
@@ -29,6 +39,13 @@ def collect_findings(report: dict[str, Any]) -> list[dict[str, Any]]:
                     **finding,
                     "category": "erc",
                     "sheet": sheet.get("path", ""),
+                    "uuid": finding.get(
+                        "uuid",
+                        stable_uuid(
+                            "violation",
+                            {"sheet": sheet.get("path", ""), **finding},
+                        ),
+                    ),
                 }
             )
     return findings
@@ -55,6 +72,7 @@ def summarize(report: dict[str, Any], limit: int = 10) -> dict[str, Any]:
         top_findings.append(
             {
                 "category": finding["category"],
+                "uuid": finding["uuid"],
                 "type": finding.get("type"),
                 "severity": finding.get("severity"),
                 "description": finding.get("description"),
@@ -63,7 +81,7 @@ def summarize(report: dict[str, Any], limit: int = 10) -> dict[str, Any]:
                 "items": [
                     {
                         "description": item.get("description"),
-                        "uuid": item.get("uuid"),
+                        "uuid": item.get("uuid") or stable_uuid("violation-item", item),
                         "pos": item.get("pos"),
                     }
                     for item in finding.get("items", []) or []

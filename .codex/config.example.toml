@@ -47,3 +47,11 @@ enabled_tools = [
   "run_drc",
   "get_unconnected_nets",
 ]
+
+[mcp_servers.kicad_routing]
+command = "powershell.exe"
+args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/kicad-routing.ps1", "mcp"]
+required = false
+startup_timeout_sec = 60
+tool_timeout_sec = 3600
+enabled_tools = ["routing_tools_info", "routing_run_candidate", "routing_plan_trace", "routing_job_result"]

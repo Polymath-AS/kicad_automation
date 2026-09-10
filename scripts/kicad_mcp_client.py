@@ -13,6 +13,11 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+try:
+    from kicad_contracts import annotate_tools, stable_tool_catalog
+except ImportError:  # pragma: no cover - direct ``python scripts/...`` execution
+    from scripts.kicad_contracts import annotate_tools, stable_tool_catalog
+
 
 DEFAULT_URL = "http://127.0.0.1:3334/mcp"
 DEFAULT_TOKEN = "kicad-automation-local-dev-token-change-me-2026"
@@ -83,6 +88,8 @@ def request(
     headers = {
         "Accept": "application/json, text/event-stream",
         "Content-Type": "application/json",
+        "MCP-Protocol-Version": PROTOCOL_VERSION,
+        "User-Agent": "kicad-automation-mcp-client/1.0",
     }
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -113,7 +120,22 @@ def initialize_params() -> dict[str, Any]:
 
 def result_is_error(response: dict[str, Any]) -> bool:
     result = response.get("result")
-    return isinstance(result, dict) and result.get("isError") is True
+    if not isinstance(result, dict):
+        return False
+    if result.get("isError") is True:
+        return True
+    structured = result.get("structuredContent")
+    if isinstance(structured, dict) and structured.get("status") == "failure":
+        return True
+    for block in result.get("content", []) or []:
+        if isinstance(block, dict) and block.get("type") == "text":
+            try:
+                decoded = json.loads(block.get("text", ""))
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(decoded, dict) and decoded.get("status") == "failure":
+                return True
+    return False
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -125,6 +147,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser("initialize", help="negotiate MCP protocol capabilities")
     commands.add_parser("list", help="list tools exposed by the active server profile")
+    commands.add_parser(
+        "catalog", help="show the stable tool superset with backend/availability metadata"
+    )
 
     schema = commands.add_parser("schema", help="show one tool's discovered schema")
     schema.add_argument("tool")
@@ -147,7 +172,16 @@ def invoke(args: argparse.Namespace) -> dict[str, Any]:
     if args.command == "initialize":
         return request(args.url, args.token, "initialize", initialize_params(), args.timeout)
     if args.command == "list":
-        return request(args.url, args.token, "tools/list", {}, args.timeout)
+        response = request(args.url, args.token, "tools/list", {}, args.timeout)
+        result = response.get("result")
+        if isinstance(result, dict) and isinstance(result.get("tools"), list):
+            result = dict(result)
+            result["tools"] = annotate_tools(result["tools"])
+            response = dict(response)
+            response["result"] = result
+        return response
+    if args.command == "catalog":
+        return {"jsonrpc": "2.0", "id": 0, "result": {"tools": stable_tool_catalog()}}
     if args.command == "schema":
         response = request(args.url, args.token, "tools/list", {}, args.timeout)
         tools = response.get("result", {}).get("tools", [])

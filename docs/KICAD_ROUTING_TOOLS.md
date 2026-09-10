@@ -118,11 +118,16 @@ handled differential nets from the generic route step preserves the intended seq
 
 Omitted numeric values use upstream's board/net-class defaults. Plans contain 1–8 steps;
 `timeout_seconds` is 10–3600 per routing step. Each ERC/DRC subprocess has a separate 120-second
-limit. Timed-out process groups are killed and logs preserved. Unknown arguments, shell commands,
-in-place overwrite switches, non-copper layers and invalid numbers fail during preflight.
+limit. Timed-out process groups are killed and logs preserved. Typed plans additionally support
+`diff_pair_gap`, `impedance`, `coplanar_gap`, `length_match_tolerance`, `zone_clearance`,
+`power_nets`, `power_nets_widths`, `stitch_vias`, `add_gnd_vias`, `gnd_via_net`, and
+`gnd_via_distance`. Differential controls are accepted only on `diff` steps and plane controls
+only on `planes` steps; numeric ranges and per-net width list lengths are validated before any
+candidate is staged. Unknown arguments, shell commands, in-place overwrite switches, non-copper
+layers and invalid numbers fail during preflight.
 
-Differential gap/impedance, explicit pair maps, power-net widths, fanout and length matching are
-not exposed in this first adapter. Do not treat a default differential route as high-speed signoff.
+These controls are routing hints, not a substitute for final stackup/signoff review. The pinned
+upstream CLI does not expose full fanout/keepout semantics or a native impedance solver.
 
 ## 4. Run and interpret evidence
 
@@ -159,21 +164,47 @@ UUID/coordinate changes may conservatively classify a moved finding as new.
 
 Open the candidate's `.kicad_pro` separately for visual review. To continue editing through IPC,
 restart KiCad MCP Pro with that candidate board as the target, then recheck project info and board
-summary. There is no automatic live promotion command yet. Preserve the original until reviewed.
+summary. Reviewed live promotion is available through `scripts/kicad_live_promotion.py` for the
+supported single-track IPC path. It applies only the validated copper delta, saves, reloads through
+`pcb_revert`, reads tracks back, checks net identity, and runs post-promotion validation. The
+same transaction boundary is now bound to `pcb_move_footprint` by
+`scripts/kicad_live_placement.py`, with explicit position restoration after post-save failure.
+The generic transaction supports injected failure/rollback callbacks; the pinned upstream MCP
+surface still does not expose a safe exact-track identity/restore primitive, so automatic rollback
+after a successful copper save remains an explicit integration boundary rather than being claimed
+implicitly.
 
 ## 5. MCP tool access
 
 After building, `.\tools\kicad-routing.cmd mcp` starts a stdio MCP server. Its JSON-RPC traffic is
-on stdin/stdout; Compose diagnostics go to stderr. Add `.codex/routing.example.toml` to the MCP
-client's project configuration and reload once. This does not require changing MCP Pro profiles.
+on stdin/stdout; Compose diagnostics go to stderr. The checked-in `.codex/config.toml` registers
+the optional routing server alongside the live KiCad server; `.codex/routing.example.toml` remains
+the minimal copyable fragment for another client. Installation may require one client catalog
+reload, but routine routing jobs do not require profile switching. If Docker or the coordinator
+is unavailable, routing tools remain discoverable with an explicit unavailable reason.
 
-1. `routing_tools_info()` reports backend/revision and source/output boundaries.
+1. `routing_tools_info()` reports backend/revision, source/output boundaries and whether topology
+   preview, dry-run blocking reports and live promotion are available.
 2. `routing_run_candidate(plan)` accepts a typed nested plan and returns the job result.
-3. `routing_job_result(job_id)` reads a persisted result after reconnecting.
+3. `routing_plan_trace(board, request)` is a pure structured-board dry-run that returns planned
+   segments or blocking object UUIDs/coordinates without writing a board.
+4. `routing_job_result(job_id)` reads a persisted result after reconnecting.
 
 Calls are synchronous. Use the CLI for jobs longer than the client's timeout. Disconnecting is
 not proof of completion. A killed container may leave a `running` checkpoint; treat it as
 incomplete and start a new job. Automatic resume/cancellation is a later milestone.
+
+### Policy schema and capability probing
+
+Plans without `schema_version` retain legacy v1 argument behavior and return a deprecation warning.
+Schema v2 defaults each operation to `fab_tier=standard`, `escalation=off`,
+`strict_sizes=true`, `no_fix_drc_settings=true`, and bounded iteration budgets. It accepts only the
+typed policy fields listed in the remaining-fixes plan; unknown, nonfinite, conflicting or
+operation-incompatible values fail before staging. The adapter runs each pinned router's sanitized
+`--help` probe before a v2 job and refuses options that the installed parser does not advertise.
+Per-stage results retain logs, policy, optional iteration metrics (unknown is represented as null),
+contract hashes and regression comparisons. A strict fabrication-policy exit is reported as policy
+rejection, not as a successful candidate or an unclassified crash.
 
 ## Verification and reproduction
 
@@ -182,7 +213,7 @@ python -m unittest discover -s tests -p 'test_*.py'
 docker compose -f compose.routing.yaml run --rm -T --entrypoint /opt/krt-python/bin/python routing /workspace/tests/integration_routing_mcp.py
 ```
 
-Verified 2026-09-09 using KiCad 10.0.4 and the pinned Rust engine:
+Verified 2026-09-10 using KiCad 10.0.4 and the pinned Rust engine:
 
 - CLI generic routing created track segments; unconnected items went from 1 to 0.
 - Real MCP initialization, nested plan schema, backend information, candidate routing, persisted
@@ -196,18 +227,45 @@ Verified 2026-09-09 using KiCad 10.0.4 and the pinned Rust engine:
   0 tracks/vias/zones before batch routing. `pcb_save` confirmed success. The fixture service was
   stopped to release its lock before routing. The ESP32 project was not modified.
 
+Latest implementation verification also rebuilt both images after the transaction/parser changes,
+ran `routing doctor`, and passed the stdio MCP and differential/plane integration commands. A
+separate disposable KiCad service on port 3336 passed `tests/integration_live_promotion.py` and
+`tests/integration_live_placement.py`; after teardown/restart, `pcb_get_footprints` read J1 back at
+`(35.00, 30.00)`. The required disposable validation command returned ERC 0 but exit 1 for the
+fixture's expected four unrouted nets and two known footprint-symbol mismatch warnings. That is
+recorded as a design-result failure, not hidden as a clean DRC result. The user ESP32 service on
+3334 remained running and was not used for mutation.
+
 `scripts/build_routing_fixture.py` records the MCP creation procedure and refuses existing
 projects by default. The checked-in project triplet is sufficient for repeatable routing tests;
 normal tests do not regenerate it. `--finish-existing` is a diagnostic recovery mode, not a
 general-purpose idempotent design builder. The two footprint warnings originate in schematic
-sync losing the library-qualified footprint identifier; that MCP defect remains open.
+sync losing the library-qualified footprint identifier in this historical fixture. New image
+builds apply a narrowly scoped kicad-mcp-pro 3.34.0 renderer patch and exercise it in
+`docker/tests/verify_kicad_mcp_compat.py`.
 
 The MCP SDK emits a Pydantic `lifespan` forward-reference warning on startup with the current
 dependency resolution; protocol tests pass, but dependency-lock hardening should resolve it.
-Differential and plane operations have dispatcher support, not yet real electrical fixture
-coverage. Neither this smoke test nor an ERC/DRC pass proves an ESP32 board production-ready.
+`tests/integration_electrical_routing.py` exercises real differential and plane fixtures. The
+differential candidate routed both `USB_D_P`/`USB_D_N` members and reduced unconnected findings
+4->2; the plane candidate created a GND B.Cu zone and preserved the baseline unconnected count.
+Both correctly return `needs_review` because unrelated fixture nets remain. Neither these
+disposable fixtures nor an ERC/DRC pass proves an ESP32 board production-ready.
+
+`tests/integration_live_promotion.py` exercises the real pinned IPC promotion path on a disposable
+copy: candidate segment, correct `USB_D_P` net, save, `pcb_revert` reopen, live readback and
+structured `saved=true`, `dirty=false`, `readback_verified=true` result. Repository validation
+reports ERC 0 and the expected remaining DRC fixture findings.
+
+`tests/integration_live_placement.py` exercises the corresponding constrained position promotion
+for J1: save, `pcb_revert` reopen, live readback, service restart durability, and the same
+structured state fields. The validator reports ERC 0 and only the fixture's expected DRC findings.
 
 ## Remaining implementation milestones
+
+The authoritative ordering, acceptance gates, and documentation-archive policy for remaining
+work are in [`REMAINING_FIXES_PLAN.md`](REMAINING_FIXES_PLAN.md). The sections below retain the
+routing-specific milestone context; they are not a separate backlog.
 
 ### R1 — Candidate routing backend (this change)
 
@@ -219,32 +277,39 @@ signal integrity or complex plane behavior.
 
 ### R2 — Electrical routing controls
 
-Add explicit differential pair identities, gap/impedance/stackup inputs, power width maps, fanout
-and guide/keepout settings. Read the pinned upstream schemas, expose typed controls, reject
-inconsistent inputs, and add one real fixture per operation. Acceptance: selected nets route with
-correct widths/clearances; unrelated nets and pin assignments remain unchanged.
+Typed differential/plane controls, validation, and one real fixture per operation are implemented.
+The remaining acceptance gap is live signoff for stackup impedance/length matching and broader
+fanout/keepout semantics than the pinned upstream CLI exposes.
 
 ### R3 — Reviewed live promotion and rollback
 
-Compute a geometry-aware copper delta and separate footprint movement report. Reject stale input,
-changed net assignments and removed unrelated copper. Apply supported changes through MCP Pro
-IPC within a checkpoint/undo boundary. Save, re-read and validate; restore via IPC on failure and
-verify restoration. Acceptance: interrupted import preserves original design; accepted changes
-survive reopening. This is the outstanding transactional portion of M6.
+`scripts/kicad_promotion.py` computes a geometry-aware copper delta and separate footprint movement
+report, rejects stale input and unsafe removals, and supplies checkpoint/restore hooks around IPC
+apply, save, re-read and validation. `scripts/kicad_live_promotion.py` binds the supported
+single-track MCP operations and has a real pinned-runtime success regression. The new
+`scripts/kicad_live_placement.py` binds constrained position promotion and explicit restoration;
+`tests/integration_live_placement.py` verifies saved readback after service restart.
+`scripts/kicad_topology.py` supplies the analogous atomic route adapter and
+`scripts/kicad_placement.py` supplies non-mutating hard-constraint placement failure. Saved-source
+rollback for copper remains open because the upstream surface lacks durable exact-track identity.
 
 ### R4 — Placement intent and ESP32 acceptance
 
-Define hard constraints for USB connector position, antenna keepout, edges, decoupling and header
-access. Grade placement before routing, establish real USB pair topology and electrical rules,
-then run the ESP32 plan. Review renders and manufacturing outputs. Router completion alone does
-not establish production readiness of the current ESP32 board.
+Repository hard constraints cover Edge.Cuts bounds, body/courtyard overlap, locked parts,
+connector-edge and antenna keepouts. `tests/fixtures/placement-intent/placement_intent.json`
+provides deterministic connector/RF intent regression data, and a pinned disposable live
+placement fixture verifies source-board promotion, save, reopen, and readback. Live
+rotation/UUID parity remains to be exercised; router completion alone does not establish
+production readiness of the current ESP32 board.
 
 ### R5 — Remaining MCP contract fixes
 
-Implement pin-addressed no-connects, precise schematic-builder schemas, save/revision semantics,
-partial-success results, KiCad 10 ratsnest fallback and selective DRC exclusions. KiCadRoutingTools
-does not solve those APIs. Keep M4 open for the original pad-to-pad helper; candidate routing is
-an alternative backend with a different persistence model.
+Pin-addressed no-connects, precise schematic-builder schemas, adapter revision semantics,
+partial-success results, and the KiCad 10 ratsnest fallback are implemented and live-tested where
+the pinned surface permits. Selective DRC preview is implemented and fails closed; live execution
+remains blocked by the pinned upstream all-violations-only exclusion API. M4 is complete for the
+original pad-to-pad helper; candidate routing is an alternative backend with a different
+persistence model.
 
 ### R6 — Runtime and release hardening
 

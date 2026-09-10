@@ -1,5 +1,6 @@
 {
   "project": "esp32_devboard/esp32_devboard/esp32_devboard.kicad_pcb",
+  "schema_version": 1,
   "timeout_seconds": 600,
   "steps": [
     {"operation": "planes", "nets": ["GND"], "layers": ["B.Cu"]},
