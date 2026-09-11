@@ -143,7 +143,18 @@ workflow, including:
 
 `kicad_get_server_info`, `kicad_get_project_info`, `kicad_get_version`, `pcb_get_board_summary`,
 `pcb_get_footprints`, `pcb_get_nets`, `pcb_get_tracks`, `pcb_get_shapes`,
-`pcb_move_component`, `pcb_move_footprint`, `pcb_route_trace`, and `pcb_save`.
+`pcb_visual_qa`, `pcb_visual_review`, `pcb_visual_history`, `pcb_visual_get`,
+`pcb_visual_compare`, `pcb_move_component`, `pcb_move_footprint`,
+`pcb_route_trace`, and `pcb_save`.
+
+For iterative visual review, capture with `pcb_visual_review`, browse with `pcb_visual_history`,
+zoom retained SVGs with `pcb_visual_get`, and compare captures with `pcb_visual_compare`.
+Captures return native PNG image content and keep all SVGs, PNGs, frozen source copies, and
+hash/version manifests under the active project's `output/image-review/<review-id>/`.
+Open `output/image-review/index.html` to see progress. Nothing is automatically pruned.
+These tools write review artifacts, not the design. Explicitly `pcb_save` first for live changes;
+use `board_path` and `expected_sha256` for isolated candidates. See the
+[review loop, API, retention guarantees, and setup](docs/PCB_VISUAL_REVIEW.md).
 
 The default profile is `builder` with `KICAD_MCP_OPERATING_MODE=write` and file-backed schematic
 support. It exposes the stable project-building surface needed to create and inspect schematics,

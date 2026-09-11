@@ -23,6 +23,7 @@ services:
     environment:
       HOME: /config/home
       KICAD_WORKSPACE: /workspace
+      KICAD_MCP_WORKSPACE_ROOT: /workspace
       KICAD_API_SOCKET_PATH: /runtime/tmp/kicad/api.sock
       KICAD_VALIDATE: /usr/local/bin/validate-kicad
       KICAD_MCP_PROJECT_DIR: /workspace
@@ -72,6 +73,7 @@ services:
     environment:
       HOME: /config/home
       KICAD_WORKSPACE: /workspace
+      KICAD_MCP_WORKSPACE_ROOT: /workspace
       KICAD_API_SOCKET_PATH: /runtime/tmp/kicad/api.sock
       KICAD_VALIDATE: /usr/local/bin/validate-kicad
       KICAD_MCP_PROJECT_DIR: /workspace

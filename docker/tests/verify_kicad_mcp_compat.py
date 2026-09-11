@@ -3,8 +3,9 @@
 from types import SimpleNamespace
 from pathlib import Path
 import tempfile
+import asyncio
 
-from kicad_mcp.tools import routing
+from kicad_mcp.tools import pcb_visual_review, routing
 from kicad_mcp.utils.layers import resolve_layer_name
 
 
@@ -25,6 +26,38 @@ assert resolve_layer_name("F.Cu") == "F_Cu"
 assert resolve_layer_name("F_Cu") == "F_Cu"
 assert resolve_layer_name("BL_F_Cu") == "F_Cu"
 assert resolve_layer_name("BL_Edge_Cuts") == "Edge_Cuts"
+
+assert list(pcb_visual_review.VIEW_SPECS) == [
+    "top", "bottom", "assembly_top", "assembly_bottom", "copper_top", "copper_bottom"
+]
+assert pcb_visual_review.DEFAULT_VIEWS == ("top", "bottom")
+
+# Verify real server registration, public schemas and mode/capability routing.
+# Compilation/constants alone cannot detect a tool silently filtered out of MCP.
+from kicad_mcp import capabilities
+from kicad_mcp.server import KiCadFastMCP
+from kicad_mcp.tools.router import TOOL_CATEGORIES, PROFILE_TOOL_ALLOWLISTS
+from kicad_mcp.operating_modes import is_tool_allowed_in_mode
+
+visual_names = {
+    "pcb_visual_review", "pcb_visual_history", "pcb_visual_get", "pcb_visual_compare"
+}
+server = KiCadFastMCP("visual-review-build-check")
+pcb_visual_review.register(server)
+schemas = {t.name: t for t in asyncio.run(server.list_tools())}
+assert visual_names <= schemas.keys(), schemas.keys()
+assert visual_names <= set(TOOL_CATEGORIES["pcb_read"]["tools"])
+assert visual_names <= set(PROFILE_TOOL_ALLOWLISTS["review"])
+assert schemas["pcb_visual_history"].annotations.readOnlyHint
+for name in visual_names - {"pcb_visual_history"}:
+    assert not schemas[name].annotations.readOnlyHint
+    assert not schemas[name].annotations.destructiveHint
+    assert capabilities.get(name).writes_files
+    assert not capabilities.get(name).writes_kicad_gui_state
+    assert is_tool_allowed_in_mode(name, "write")
+assert "expected_sha256" in schemas["pcb_visual_review"].inputSchema["properties"]
+assert "crop" in schemas["pcb_visual_get"].inputSchema["properties"]
+assert "before_id" in schemas["pcb_visual_compare"].inputSchema["required"]
 
 with tempfile.TemporaryDirectory() as directory:
     import kicad_mcp.tools.pcb as pcb

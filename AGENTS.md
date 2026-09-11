@@ -69,6 +69,20 @@ Do not mutate `.kicad_pcb` or `.kicad_pro` files directly when an MCP operation 
 with file edits. If the MCP server is unavailable, diagnose the connection and stop before making
 design changes.
 
+## Iterative visual review
+
+Use the existing MCP visual tools, not host screenshots or ad-hoc render scripts.
+Read `docs/PCB_VISUAL_REVIEW.md` when capturing or comparing PCB images.
+Explicitly save live edits before `pcb_visual_review`; it renders frozen saved-file
+copies, not unsaved GUI state. Label each review and retain its ID/source hash.
+Use `pcb_visual_get` for sharp detail crops, `pcb_visual_history` to find earlier
+reviews, and `pcb_visual_compare` for before/after contact sheets. All images are
+retained under the active project's `output/image-review/`, with an HTML gallery.
+For isolated candidates, pass the actual workspace-relative board path and
+`expected_sha256` from the job result; do not switch/open/promote a board just
+to view it. Visual review complements exact IPC inspection and ERC/DRC, and never
+replaces the promotion transaction checks.
+
 ## New project bootstrap
 
 Create the project as a complete directory containing `.kicad_pro`, `.kicad_sch`, and `.kicad_pcb`.

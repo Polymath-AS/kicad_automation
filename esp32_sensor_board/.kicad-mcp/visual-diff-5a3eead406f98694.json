@@ -1,0 +1,22 @@
+{
+  "status": "ready",
+  "schematic_path": "/workspace/esp32_sensor_board/esp32_sensor_board.kicad_sch",
+  "before_snapshot": "/workspace/esp32_sensor_board/.kicad-mcp/visual-diff-5a3eead406f98694-before.kicad_sch",
+  "before_sha256": "2d0a904510637a876a58a7234fb64cbf6694d2397e32fc3ffc0bb6c0a265b299",
+  "after_sha256": "e52873b626a6869095d06000867d23e6e54ec7121ea05eda7976113d6fae1ced",
+  "changed_objects": [
+    {
+      "id": "no_connect:311.15,77.47",
+      "kind": "no_connect",
+      "change": "added",
+      "before": null,
+      "after": {
+        "kind": "no_connect",
+        "x": 311.15,
+        "y": 77.47
+      }
+    }
+  ],
+  "changed_refs": [],
+  "changed_nets": []
+}

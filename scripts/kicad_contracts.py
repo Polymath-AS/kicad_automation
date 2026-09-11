@@ -91,6 +91,10 @@ STABLE_TOOL_CATALOG: tuple[ToolMetadata, ...] = (
     ToolMetadata("run_erc", "cli", True),
     ToolMetadata("run_drc", "cli", True),
     ToolMetadata("get_unconnected_nets", "live_ipc", True),
+    ToolMetadata("pcb_visual_review", "cli", True, True),
+    ToolMetadata("pcb_visual_history", "file_backed", True),
+    ToolMetadata("pcb_visual_get", "file_backed", True, True),
+    ToolMetadata("pcb_visual_compare", "file_backed", True, True),
     # The routing service is a separate, isolated MCP transport.  Keep these
     # names in the stable catalog even when Docker is unavailable; discovery
     # must not depend on write permission or profile switching.

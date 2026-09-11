@@ -6,3 +6,5 @@ __pycache__/
 .kicad-automation/
 .env
 .tmp*
+# Persistent generated review evidence is retained on disk, not auto-committed.
+**/output/image-review/

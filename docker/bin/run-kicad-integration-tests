@@ -67,7 +67,7 @@ done
 }
 
 python3 /usr/local/lib/kicad-automation/kicad_mcp_client.py \
-  --url "$mcp_url" --token "$KICAD_MCP_AUTH_TOKEN" --timeout 120 list \
+  --url "$mcp_url" --token "$KICAD_MCP_AUTH_TOKEN" --timeout 120 raw tools/list \
   >/runtime/test-mcp-tools.json
 has_tool kicad_get_server_info || { printf 'MCP tool list missing kicad_get_server_info\n' >&2; exit 2; }
 
@@ -78,6 +78,7 @@ if [[ "${KICAD_MCP_PROFILE:-builder}" == builder ]]; then
     pcb_sync_from_schematic pcb_get_board_summary pcb_get_pads
     pcb_set_board_outline pcb_set_design_rules pcb_delete_items pcb_save
     pcb_route_trace
+    pcb_visual_review pcb_visual_history pcb_visual_get pcb_visual_compare
     run_erc run_drc get_unconnected_nets
   )
   for required_tool in "${required_workflow_tools[@]}"; do
@@ -106,6 +107,14 @@ if has_tool pcb_get_board_summary; then
     printf 'PCB summary after save did not prove live-gui IPC usage\n' >&2
     exit 2
   }
+fi
+
+# Exercise native MCP ImageContent, retained SVG/PNG, zoom, history pagination,
+# comparison, hash guards, and preservation through the real CLI/raster pipeline.
+if has_tool pcb_visual_review; then
+  python3 /usr/local/lib/kicad-automation/integration_visual_review.py \
+    --url "$mcp_url" --token "$KICAD_MCP_AUTH_TOKEN" --board "/workspace/$target" \
+    >/runtime/test-visual-review.json
 fi
 
 server_info=$(server_info_text /runtime/test-mcp-server-info.json)
@@ -190,6 +199,9 @@ artifacts=(
   "/runtime/test-validate.json"
   "/runtime/test-validate.err"
 )
+if has_tool pcb_visual_review; then
+  artifacts+=("/runtime/test-visual-review.json")
+fi
 if [[ "$pcb_exposed" -eq 1 ]]; then
   artifacts+=(
     "/runtime/test-mcp-ipc-summary.json"

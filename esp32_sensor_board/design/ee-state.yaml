@@ -1,0 +1,123 @@
+schema_version: 1
+
+stage: review
+
+intent:
+  summary: "2-layer USB-C powered and programmable ESP32 board with an I2C temperature sensor and an addressable RGB LED."
+  constraints:
+    - "USB-C receptacle is the sole power and programming interface."
+    - "Use 3.3 V logic for the ESP32 and sensor; keep USB 2.0 data routing short."
+    - "Provide automatic ESP32 reset and bootloader entry from the USB-UART bridge."
+    - "Keep the ESP32 antenna at a board edge with copper clearance beneath/around it."
+  assumptions:
+    - "Indoor, single-board use with no external power input and no USB Power Delivery negotiation."
+    - "USB-C sink uses 5.1 kOhm CC pull-downs and is limited to default USB current."
+    - "A 2-layer FR-4 board is acceptable; use a solid ground plane where practical."
+    - "The RGB indicator is one 5 V WS2812B pixel and is software current-limited."
+
+architecture:
+  summary: "USB-C VBUS passes through resettable protection to a 3.3 V LDO; CH340C provides USB-UART programming and drives an ESP32 auto-reset circuit; the ESP32 talks I2C to TMP102 and drives a 5 V WS2812B through an AHCT level shifter."
+  blocks:
+    - name: "USB-C input"
+      purpose: "USB 2.0 data, 5 V input, sink identification, and ESD protection"
+      interfaces:
+        - "USB D+/D- to CH340C"
+        - "VBUS to protected 5 V rail"
+    - name: "Power"
+      purpose: "Generate regulated 3.3 V for the ESP32 and sensor"
+      interfaces:
+        - "AP2112K-3.3 from protected USB 5 V"
+    - name: "USB-UART/programming"
+      purpose: "USB serial console and automatic ESP32 reset/bootloader entry"
+      interfaces:
+        - "CH340C UART to ESP32 GPIO1/GPIO3"
+        - "DTR/RTS transistor pulls for EN/IO0"
+    - name: "ESP32 controller"
+      purpose: "Wi-Fi/Bluetooth MCU, sensor polling, and LED control"
+      interfaces:
+        - "I2C on GPIO21/GPIO22"
+        - "TMP102 ALERT on GPIO34"
+        - "WS2812B data on GPIO4"
+    - name: "Temperature sensor"
+      purpose: "Local digital temperature measurement"
+      interfaces:
+        - "TMP102 on I2C address 0x48"
+    - name: "RGB indicator"
+      purpose: "One addressable RGB pixel"
+      interfaces:
+        - "5 V WS2812B via 74AHCT1G125 level shifter"
+
+components:
+  selected:
+    - function: "ESP32 module"
+      part: "ESP32-WROOM-32"
+      reason: "Common certified Wi-Fi/Bluetooth module with integrated flash and PCB antenna; supported by the KiCad RF_Module library."
+      datasheet: "https://documentation.espressif.com/esp32-wroom-32_datasheet_en.html"
+      notes:
+        - "Use the module footprint and keep the antenna end at the board edge."
+    - function: "USB-UART bridge"
+      part: "CH340C"
+      reason: "Low-cost USB 2.0 UART bridge with integrated clock and DTR/RTS modem outputs for auto-programming."
+      datasheet: "https://www.wch.cn/downloads/CH340DS2.PDF.html?type=en"
+      notes:
+        - "VCC is USB 5 V; decouple V3 and leave R232 in the normal UART configuration."
+    - function: "3.3 V regulator"
+      part: "AP2112K-3.3"
+      reason: "600 mA LDO with enable, adequate for ESP32 peak current plus sensor and logic loads."
+      datasheet: "https://www.diodes.com/datasheet/download/AP2112.pdf"
+      notes:
+        - "Use local input and output ceramic capacitors and keep the loop compact."
+    - function: "Temperature sensor"
+      part: "TMP102xxDRL"
+      reason: "Low-power I2C temperature sensor in the compact SOT-563 package with ALERT output."
+      datasheet: "https://www.ti.com/product/TMP102"
+      notes:
+        - "ADDR is tied low for address 0x48; add 4.7 kOhm I2C pull-ups."
+    - function: "RGB LED"
+      part: "WS2812B"
+      reason: "Single-chip addressable RGB pixel; powered at 5 V and driven through an AHCT buffer for logic-level margin."
+      datasheet: "https://world-semi.com/products/ws2812b-0909.html"
+      notes:
+        - "Place a local bulk capacitor and a small series resistor on DIN."
+    - function: "USB ESD protection"
+      part: "USBLC6-2SC6"
+      reason: "Dedicated USB 2.0 D+/D- low-capacitance protection device."
+      datasheet: "https://www.st.com/resource/en/datasheet/usblc6-2.pdf"
+  unresolved: []
+
+schematic:
+  status: complete
+  issues: []
+
+pcb:
+  visual_review:
+    method: "pcb_visual_review MCP tool"
+    documentation: "design/IMAGE_REVIEW.md"
+    status: "implemented and verified against the saved board"
+  placement_intent:
+    - "Fix J1 at the board edge; keep CC resistors and USB ESD/series parts close to the connector and CH340C."
+    - "Keep U1 antenna at the board edge with no copper or components under the antenna keepout."
+    - "Place U3, C2, and C3 as a compact power block away from the antenna."
+    - "Place TMP102 away from the LDO, CH340C, and WS2812B heat sources."
+    - "Place C4 immediately beside U1 VDD/GND and keep the reset/boot pullups near U1."
+    - "Keep U6 and D1 together; place the DIN resistor at the LED input."
+  routing_intent:
+    - "Route USB D+/D- as a short matched pair with continuous ground reference and minimal stubs."
+    - "Route 3.3 V power and ESP32 ground with short, low-impedance connections; use a ground plane."
+    - "Keep I2C and LED data away from the ESP32 antenna and USB pair."
+    - "Route reset/boot control from CH340C through the transistor bases, not directly to strap pins."
+  issues:
+    - "The reviewed 70 x 50 mm placement is saved; the earlier isolated placement candidate was rejected because it moved one item out of bounds and introduced new non-connectivity findings. A later bounded place_optimize attempt failed before producing a candidate (job 20260910-163032-64b3ae76a5, exit code 3), so no placement mutation was applied."
+    - "Two isolated routing candidates were rejected by the conservative comparison gate; the route-only candidate reduced raw unconnected items from 90 to 33 but introduced 47 new non-connectivity findings, so it was not promoted."
+    - "Reviewed single-net candidates for USB_CC1, CH340_V3, LED_DATA, USB_DP, and USB_DM were promoted through additive IPC routing. The visually reviewed LED_DATA_3V3 candidate (job 20260910-163329-f13f48dbdd, source dac123ed277bfe74989270f9ef3d39a0a1c09145210442e73e29b2a51fc9b2c4, candidate 210e0e631ebb56f1f27eec365f00904ae4cc735bb234c9f9dc4a0203cdeb97c3) was also promoted; it used no vias, preserved connectivity, and entered U1 from the lower routing channel. The saved board now has 50 F.Cu track segments and 84 unrouted items."
+    - "The USB_CC2 candidate was rejected because it required 0.3 mm vias below the 0.5 mm board via floor; a manual via-free escape did not satisfy connectivity and was discarded unsaved."
+    - "The USB_DP_PROTECTED candidate was rejected because it required two 0.3 mm vias, narrowed track width, and introduced nine new non-connectivity findings; it was not promoted."
+    - "The I2C_SDA candidate (job 20260910-164252-beab49962b, source 5418972500e7b34f31fbc891de3de4a8dbec032efd149c6c8e8c16552821d608, candidate 716f8109da05a5ebb18eb8ba28c45ae57c9dcd4813b97c5e35c6d6411d475e4d) and I2C_SCL candidate (job 20260910-164502-9155328503, candidate 4e5658e035cdd8e712a474980016abf10f5d68e71ca4255974c3eb3c260ae11c) both connected all endpoints with no vias, but visual review rejected their upper-channel paths adjacent to the ESP32 module/antenna keepout."
+    - "The TMP_ALERT candidate (job 20260910-164707-d642b7bebb, source 5418972500e7b34f31fbc891de3de4a8dbec032efd149c6c8e8c16552821d608, candidate 555a48f6ef9cb40046d2500573e6e862984db61a53b7d31038ba0c7dc5c6445c) was visually reviewed and promoted through additive IPC routing; it connects U4, R14, and U1 from the lower/left channel without vias or new non-connectivity findings."
+    - "The ESP_EN candidate (job 20260910-165107-fe46932fef, source e6ebdbc8195506771ad1502b5fed4e907b71db7ad202a2001afbf2ef5db6ad2f, candidate a9a406c7cc7c1bb9f846d0e3169517c86f6264fbaef0deed02341473013838bf) was visually reviewed and promoted through additive IPC routing; it connects the four-node enable network in the central control corridor without vias or new non-connectivity findings."
+    - "The ESP_BOOT candidate (job 20260910-165553-bffeae51d0, source bf133121ab2e7baf09a4c511c8a92430f6cf4b44d34c6a291601dcb387d10253, candidate 2f655afdf6492b31f73e9645d09f56b5631e33d8eea3cf75bd0ffc3776ecbcee) was rejected: it required 0.1818 mm minimum clearance and rerouted the accepted TMP_ALERT path. It was not promoted."
+    - "The ESP32-WROOM-32 library footprint contains twelve 0.2 mm thermal-via holes while the current board minimum is 0.3 mm; confirm the fabricator capability or revise the footprint/rule before release."
+    - "One C5/U2 courtyard overlap and the footprint-symbol mismatch warnings remain for final manufacturing review; the J1/F1 overlap was removed by moving F1 to (20.0, 14.0) mm."
+    - "Final saved-board readback after the LED_DATA_3V3, TMP_ALERT, and ESP_EN promotions is consistent at 77 tracks, 0 vias, 34 footprints, 62 nets, and 1 outline shape; ERC is clean, but DRC still reports 79 unconnected items plus the known footprint, hole, courtyard, clearance, and silkscreen findings (136 total findings: 100 errors and 36 warnings)."
+
+open_questions: []

@@ -5,3 +5,4 @@ analysis/*.json
 **/__pycache__
 **/*.pyc
 .kicad-automation
+**/output/image-review
